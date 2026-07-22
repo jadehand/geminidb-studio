@@ -1,7 +1,8 @@
 import { spawnSync } from 'node:child_process'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, statSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import process from 'node:process'
 
 const targets = {
@@ -19,10 +20,14 @@ const [pkgTarget, triple, extension] = target
 const output = `src-tauri/binaries/geminidb-bridge-${triple}${extension}`
 mkdirSync('src-tauri/binaries', { recursive: true })
 
-const executable = process.platform === 'win32' ? 'node_modules/.bin/pkg.cmd' : 'node_modules/.bin/pkg'
-const result = spawnSync(executable, ['apps/bridge/server.mjs', '--target', pkgTarget, '--output', output], {
+const require = createRequire(import.meta.url)
+const pkgRoot = dirname(require.resolve('@yao-pkg/pkg/package.json'))
+const pkgCli = join(pkgRoot, 'lib-es5', 'bin.js')
+const result = spawnSync(process.execPath, [pkgCli, 'apps/bridge/server.mjs', '--target', pkgTarget, '--output', output], {
   stdio: 'inherit',
   env: { ...process.env, PKG_CACHE_PATH: process.env.PKG_CACHE_PATH || join(tmpdir(), 'geminidb-studio-pkg-cache') }
 })
+if (result.error) throw result.error
 if (result.status !== 0) process.exit(result.status ?? 1)
+if (statSync(output).size === 0) throw new Error(`Bridge sidecar 产物为空：${output}`)
 console.log(`Bridge sidecar：${output}`)
