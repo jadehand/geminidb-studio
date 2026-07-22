@@ -7,7 +7,7 @@ on:
       - "v*"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-windows:
@@ -49,3 +49,8 @@ jobs:
           args: --target x86_64-pc-windows-msvc
           uploadWorkflowArtifacts: true
           workflowArtifactNamePattern: geminidb-studio-windows-x64-[bundle]
+          tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+          releaseName: GeminiDB Studio ${{ github.ref_name }}
+          releaseBody: 自动构建的 Windows x64 MSI 与 NSIS 安装包，更新内容见 CHANGELOG.md。
+          releaseDraft: false
+          prerelease: false
