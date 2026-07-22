@@ -1,13 +1,12 @@
 {
   "name": "geminidb-studio",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.2",
   "workspaces": [
     "apps/web"
   ],
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
-    "@tauri-apps/plugin-shell": "^2.3.5",
     "monaco-editor": "0.53.0"
   },
   "scripts": {
@@ -21,7 +20,7 @@
     "desktop:info": "tauri info",
     "build": "npm --workspace @geminidb-studio/web run build",
     "check": "npm --workspace @geminidb-studio/web run check",
-    "test:bridge": "node --test apps/bridge/influx-client.test.mjs"
+    "test:bridge": "node --test apps/bridge/*.test.mjs scripts/*.test.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4",

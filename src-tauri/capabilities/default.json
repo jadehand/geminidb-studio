@@ -3,12 +3,5 @@
   "identifier": "default",
   "description": "Default desktop window permissions",
   "windows": ["main"],
-  "permissions": [
-    "core:default",
-    {
-      "identifier": "shell:allow-spawn",
-      "allow": [{ "name": "binaries/geminidb-bridge", "sidecar": true }]
-    },
-    "shell:allow-kill"
-  ]
+  "permissions": ["core:default"]
 }

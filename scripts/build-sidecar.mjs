@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import process from 'node:process'
+import { setWindowsGuiSubsystem } from './pe-subsystem.mjs'
 
 const targets = {
   'linux-x64': ['node22-linux-x64', 'x86_64-unknown-linux-gnu', ''],
@@ -30,4 +31,5 @@ const result = spawnSync(process.execPath, [pkgCli, 'apps/bridge/server.mjs', '-
 if (result.error) throw result.error
 if (result.status !== 0) process.exit(result.status ?? 1)
 if (statSync(output).size === 0) throw new Error(`Bridge sidecar 产物为空：${output}`)
+if (process.platform === 'win32') setWindowsGuiSubsystem(output)
 console.log(`Bridge sidecar：${output}`)

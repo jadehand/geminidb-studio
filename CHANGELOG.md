@@ -1,5 +1,18 @@
 # 更新日志
 
+## 0.3.2
+
+- Windows Release 主程序改用 GUI 子系统，启动客户端时不再弹出黑色终端；
+- Windows Bridge Sidecar 构建后自动改为 GUI 子系统，避免后台服务额外弹出控制台；
+- 增加 PE 文件格式与子系统字段自动化校验，构建异常时直接失败而不是生成错误安装包。
+
+## 0.3.1
+
+- Bridge 生命周期改由 Rust 主进程统一管理，WebView 不再直接启动或销毁 Sidecar；
+- Windows 退出时按准确 PID 终止 Bridge 进程树，避免安装升级时文件被残留进程占用；
+- Bridge 增加父进程存活监测，桌面主进程异常退出后自动关闭；
+- 移除 WebView 的 Shell 启动与终止权限，减少重复启动和权限面。
+
 ## 0.3.0
 
 - 查询页签、Database、Measurement 和界面状态自动恢复；
