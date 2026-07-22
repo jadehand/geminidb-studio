@@ -1,3 +1,5 @@
+use tauri::Manager;
+
 const CREDENTIAL_SERVICE: &str = "cn.loomi.geminidb-studio";
 
 #[tauri::command]
@@ -27,6 +29,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![save_credential, load_credential, delete_credential])
+        .on_window_event(|_window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/F", "/IM", "geminidb-bridge.exe"])
+                    .output();
+            }
+        })
         .run(tauri::generate_context!())
         .expect("GeminiDB Studio desktop client failed to start");
 }
