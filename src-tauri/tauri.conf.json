@@ -1,0 +1,34 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "GeminiDB Studio",
+  "version": "0.1.0",
+  "identifier": "cn.loomi.geminidb-studio",
+  "build": {
+    "beforeDevCommand": "npm run dev:desktop-services",
+    "devUrl": "http://127.0.0.1:8791",
+    "beforeBuildCommand": "npm run build:desktop",
+    "frontendDist": "../apps/web/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "GeminiDB Studio",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 700,
+        "resizable": true,
+        "center": true
+      }
+    ],
+    "security": { "csp": null }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "GeminiDB Influx desktop query client",
+    "externalBin": ["binaries/geminidb-bridge"]
+  }
+}

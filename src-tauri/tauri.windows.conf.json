@@ -1,0 +1,9 @@
+{
+  "bundle": {
+    "targets": ["msi", "nsis"],
+    "windows": {
+      "wix": { "language": "zh-CN" },
+      "nsis": { "languages": ["SimpChinese", "English"] }
+    }
+  }
+}
