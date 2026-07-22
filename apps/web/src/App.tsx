@@ -26,6 +26,7 @@ export default function App() {
   const [tables, setTables] = useState<string[]>([])
   const [selectedTable, setSelectedTable] = useState('')
   const [schema, setSchema] = useState<MeasurementSchema>({ fields: [], tags: [] })
+  const [schemaLoading, setSchemaLoading] = useState(false)
   const [databaseOpen, setDatabaseOpen] = useState(true)
   const [measurementsOpen, setMeasurementsOpen] = useState(true)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
@@ -44,6 +45,8 @@ export default function App() {
   const [message, setMessage] = useState('')
   const [running, setRunning] = useState(false)
   const queryAbort = useRef<AbortController | null>(null)
+  const schemaCache = useRef(new Map<string, MeasurementSchema>())
+  const schemaRequest = useRef(0)
   const cancelReason = useRef<'user' | 'timeout' | null>(null)
   const [connectionDialog, setConnectionDialog] = useState<Connection | null>(null)
   const [timeDialog, setTimeDialog] = useState(false)
@@ -73,6 +76,7 @@ export default function App() {
       await bridge.login({ mode: connection.mode, endpoint: connection.endpoint, username: connection.username, password: connection.password || sessionStorage.getItem(`gdb.password.${connection.id}`) || '', insecureSkipVerify: connection.insecureSkipVerify, readOnly: connection.readOnly })
       const list = await bridge.databases()
       const nextDb = list.includes(database) ? database : list[0]
+      schemaRequest.current += 1; setSelectedTable(''); setSchema({ fields: [], tags: [] }); setSchemaLoading(false)
       setDatabases(list); setDatabase(nextDb); setTables(await bridge.tables(nextDb)); setStatus(`${connection.name} 已连接`); toast('已登录并载入数据目录')
     } catch (error) { setStatus('连接失败'); toast(error instanceof Error ? error.message : '连接失败') }
   }
@@ -84,16 +88,29 @@ export default function App() {
     const started = performance.now()
     try {
       await bridge.query(database, `USE \`${next}\``)
-      setDatabase(next); setSelectedTable(''); setSchema({fields:[],tags:[]}); setTables(await bridge.tables(next)); addHistory(`USE \`${next}\``, performance.now() - started, 'success', 'database 已切换', next); toast(`已执行 USE ${next}`)
+      schemaRequest.current += 1; setSchemaLoading(false); setDatabase(next); setSelectedTable(''); setSchema({fields:[],tags:[]}); setTables(await bridge.tables(next)); addHistory(`USE \`${next}\``, performance.now() - started, 'success', 'database 已切换', next); toast(`已执行 USE ${next}`)
     } catch (error) { addHistory(`USE \`${next}\``, performance.now() - started, 'error', error instanceof Error ? error.message : '切换失败', database) }
   }
 
   async function chooseTable(table: string) {
     setSelectedTable(table)
-    setSchema({ fields: [], tags: [] })
     persistQueryTabs(queryTabs.map(tab => tab.id === activeQueryTab.id ? {...tab,name:table.replace(/_\d{10}$/,'').slice(0,28),sql:`SELECT *\nFROM "${table}"\nWHERE time >= now() - 1h\nORDER BY time DESC\nLIMIT 100`} : tab))
-    try { const nextSchema=await bridge.schema(database,table);setSchema(nextSchema);toast(`已载入 ${nextSchema.fields.length} 个字段、${nextSchema.tags.length} 个 Tag`) }
-    catch (error) { toast(error instanceof Error ? `字段加载失败：${error.message}` : '字段加载失败') }
+    await loadSchema(table)
+  }
+
+  async function loadSchema(table: string, force = false) {
+    const key = `${currentConnection?.id || activeConnection}\u0000${database}\u0000${table}`
+    const requestId = ++schemaRequest.current
+    const cached = schemaCache.current.get(key)
+    if (cached && !force) { setSchema(cached); setSchemaLoading(false); return }
+    setSchema({ fields: [], tags: [] }); setSchemaLoading(true)
+    try {
+      const nextSchema = await bridge.schema(database, table)
+      schemaCache.current.set(key, nextSchema)
+      if (requestId === schemaRequest.current) { setSchema(nextSchema); toast(`已载入 ${nextSchema.fields.length} 个字段、${nextSchema.tags.length} 个 Tag`) }
+    } catch (error) {
+      if (requestId === schemaRequest.current) toast(error instanceof Error ? `字段加载失败：${error.message}` : '字段加载失败')
+    } finally { if (requestId === schemaRequest.current) setSchemaLoading(false) }
   }
 
   function toggleGroup(prefix: string) { setCollapsedGroups(current => { const next=new Set(current);if(next.has(prefix))next.delete(prefix);else next.add(prefix);return next }) }
@@ -130,15 +147,15 @@ export default function App() {
   return <div className={`app ${sideOpen ? '' : 'sidebar-closed'}`}>
     <header><div className="brand"><span className="brand-mark"/><b>GeminiDB Studio</b></div><div className="topbar">
       <select value={database} onChange={e => void changeDatabase(e.target.value)} disabled={!databases.length}>{databases.map(db => <option key={db}>{db}</option>)}</select>
-      <button className="icon-button" onClick={() => setTimeDialog(true)} title="时间戳转换">◷</button><span className={`connection-state ${status.includes('失败') ? 'error' : ''}`}><i/>{status}</span><button onClick={() => setConnectionDialog(currentConnection)}>管理连接</button>
+      <button className="icon-button" onClick={() => setTimeDialog(true)} title="时间戳转换">◷</button><button className={`connection-state connection-control ${status.includes('失败') ? 'error' : ''}`} onClick={() => currentConnection && setConnectionDialog(currentConnection)} title="编辑当前连接"><i/>{status}<UiIcon name="settings"/></button>
     </div></header>
 
-    <aside className="left-sidebar"><nav className="tool-rail"><button className={sideOpen && sideTool === 'connections' ? 'active' : ''} onClick={() => switchTool('connections')} title="常用连接">⌘</button><button className={sideOpen && sideTool === 'catalog' ? 'active' : ''} onClick={() => switchTool('catalog')} title="数据目录">▦</button></nav>
-      <div className="side-content">{sideTool === 'connections' ? <section className="side-panel"><PanelTitle title="常用连接" count={connections.length}/><div className="panel-scroll">{connections.map(connection => <button key={connection.id} className={`connection-row ${connection.id === activeConnection ? 'active' : ''}`} onClick={() => { setActiveConnection(connection.id); save('gdb.activeConnection', connection.id); void connect(connection) }}><span className="database-icon">◉</span><span><b>{connection.name}</b><small>{connection.mode === 'mock' ? '本地 Mock Bridge' : connection.endpoint}</small></span></button>)}<button className="add-row" onClick={() => setConnectionDialog({ ...DEFAULT_CONNECTION, id:'', name:'', mode:'influx', endpoint:'https://', username:'rwuser', password:'' })}>＋ 添加 GeminiDB 连接</button></div></section> :
-      <section className="side-panel"><PanelTitle title="数据目录" count={databases.length}/><div className="catalog-tools"><small>{database} · {filteredTables.length} 张天表</small><button onClick={() => void connect()}>↻</button></div><div className="search"><span>⌕</span><input value={filter} onChange={e => setFilter(e.target.value)} placeholder="按 measurement 前缀或表名筛选"/></div><div className="tree"><button className="tree-row selected tree-toggle" aria-expanded={databaseOpen} onClick={()=>setDatabaseOpen(value=>!value)}><span>{databaseOpen?'▼':'▶'}</span><b>▱ {database}</b><em>database</em></button>{databaseOpen&&<><button className="tree-row level-1 tree-toggle" aria-expanded={measurementsOpen} onClick={()=>setMeasurementsOpen(value=>!value)}><span>{measurementsOpen?'▼':'▶'}</span><b>◉ measurements</b><em>{filteredTables.length} 天表</em></button>{measurementsOpen&&Object.entries(tableGroups).map(([prefix, group]) => {const open=!collapsedGroups.has(prefix);return <div key={prefix}><button className="tree-row level-2 tree-toggle" aria-expanded={open} onClick={()=>toggleGroup(prefix)}><span>{open?'▼':'▶'}</span><b><code>M</code> {prefix}</b><em>{group.length}</em></button>{open&&group.toSorted().reverse().map(table => { const parsed = splitTable(table); return <button key={table} onClick={() => void chooseTable(table)} className={`tree-row table-row level-3 ${table === selectedTable ? 'selected' : ''}`}><span>•</span><span><b>{day(parsed.timestamp)}</b><small>{table}</small></span></button> })}</div>})}</>}</div></section>}</div>
+    <aside className="left-sidebar"><nav className="tool-rail" aria-label="工具窗口"><button className={sideOpen && sideTool === 'connections' ? 'active' : ''} onClick={() => switchTool('connections')} title="连接"><UiIcon name="connection"/></button><button className={sideOpen && sideTool === 'catalog' ? 'active' : ''} onClick={() => switchTool('catalog')} title="数据目录"><UiIcon name="catalog"/></button></nav>
+      <div className="side-content">{sideTool === 'connections' ? <section className="side-panel"><PanelTitle title="连接" count={connections.length}/><div className="panel-scroll connection-list">{connections.map(connection => <div key={connection.id} className={`connection-item ${connection.id === activeConnection ? 'active' : ''}`}><button className="connection-row" onClick={() => { setActiveConnection(connection.id); save('gdb.activeConnection', connection.id); void connect(connection) }}><span className="connection-glyph"><UiIcon name="connection"/></span><span><b>{connection.name}</b><small>{connection.mode === 'mock' ? '本地 Mock Bridge' : connection.endpoint}</small></span></button><button className="connection-more" onClick={() => setConnectionDialog(connection)} aria-label={`编辑 ${connection.name}`} title="编辑连接">•••</button></div>)}</div><div className="connection-footer"><button className="add-row" onClick={() => setConnectionDialog({ ...DEFAULT_CONNECTION, id:'', name:'', mode:'influx', endpoint:'https://', username:'rwuser', password:'' })}><span>＋</span> 新建连接</button></div></section> :
+      <section className="side-panel"><PanelTitle title="数据目录" count={databases.length}/><div className="catalog-tools"><small>{database}<span>·</span>{filteredTables.length} 张天表</small><button onClick={() => void connect()} title="刷新数据目录">↻</button></div><div className="search"><span><UiIcon name="search"/></span><input value={filter} onChange={e => setFilter(e.target.value)} placeholder="筛选 Measurement 或表名"/></div><div className="tree"><button className="tree-row selected tree-toggle" aria-expanded={databaseOpen} onClick={()=>setDatabaseOpen(value=>!value)}><UiIcon name="chevron" open={databaseOpen}/><UiIcon name="database"/><b>{database}</b><em>Database</em></button>{databaseOpen&&<><button className="tree-row level-1 tree-toggle" aria-expanded={measurementsOpen} onClick={()=>setMeasurementsOpen(value=>!value)}><UiIcon name="chevron" open={measurementsOpen}/><UiIcon name="layers"/><b>Measurements</b><em>{filteredTables.length}</em></button>{measurementsOpen&&Object.entries(tableGroups).map(([prefix, group]) => {const open=!collapsedGroups.has(prefix);return <div key={prefix}><button className="tree-row level-2 tree-toggle" aria-expanded={open} onClick={()=>toggleGroup(prefix)}><UiIcon name="chevron" open={open}/><UiIcon name="table"/><b>{prefix}</b><em>{group.length}</em></button>{open&&group.toSorted().reverse().map(table => { const parsed = splitTable(table); return <button key={table} onClick={() => void chooseTable(table)} className={`tree-row table-row level-3 ${table === selectedTable ? 'selected' : ''}`}><span className="tree-guide"/><span><b>{day(parsed.timestamp)}</b><small>{table}</small></span></button> })}</div>})}</>}</div></section>}</div>
     </aside>
 
-    <main><section className="editor"><div className="editor-head"><div><h1>查询窗口</h1><span className="context">{database} / {selectedTable || '未选表'}</span></div><div className="actions"><button className="claude" onClick={() => void askClaude()}>✦ 问 Claude Code</button><button onClick={saveFavorite}>☆ 收藏语句</button><button className={running ? 'danger' : 'primary'} onClick={running ? cancelQuery : () => void runQuery()}>{running ? '■ 取消查询' : '▶ 执行命令'}</button></div></div><div className="query-tabs" role="tablist">{queryTabs.map(tab=><div key={tab.id} role="tab" tabIndex={0} aria-selected={tab.id===activeQueryTab.id} className={`query-tab ${tab.id===activeQueryTab.id?'active':''}`} onClick={()=>selectQueryTab(tab.id)} onKeyDown={event=>{if(event.key==='Enter'||event.key===' ')selectQueryTab(tab.id)}} onDoubleClick={()=>renameQueryTab(tab.id)} title="双击重命名"><span>{tab.name}</span><button className="close-tab" onClick={event=>{event.stopPropagation();closeQueryTab(tab.id)}} aria-label={`关闭 ${tab.name}`}>×</button></div>)}<button className="add-query-tab" onClick={addQueryTab} title="新建查询">＋</button></div><Suspense fallback={<div className="editor-loading">正在加载 InfluxQL 编辑器…</div>}><QueryEditor tabId={activeQueryTab.id} value={sql} measurements={tables} schema={schema} onChange={setSql} onRun={command=>void runQuery(command)}/></Suspense></section>
+    <main><section className="editor"><div className="editor-head"><div><h1>查询窗口</h1><span className="context">{database} / {selectedTable || '未选表'}</span>{selectedTable&&<button className="schema-refresh" disabled={schemaLoading} onClick={()=>void loadSchema(selectedTable,true)} title="刷新当前 Measurement 的 Field 和 Tag">{schemaLoading?'… Schema':'↻ Schema'}</button>}</div><div className="actions"><button className="claude" onClick={() => void askClaude()}>✦ 问 Claude Code</button><button onClick={saveFavorite}>☆ 收藏语句</button><button className={running ? 'danger' : 'primary'} onClick={running ? cancelQuery : () => void runQuery()}>{running ? '■ 取消查询' : '▶ 执行命令'}</button></div></div><div className="query-tabs" role="tablist">{queryTabs.map(tab=><div key={tab.id} role="tab" tabIndex={0} aria-selected={tab.id===activeQueryTab.id} className={`query-tab ${tab.id===activeQueryTab.id?'active':''}`} onClick={()=>selectQueryTab(tab.id)} onKeyDown={event=>{if(event.key==='Enter'||event.key===' ')selectQueryTab(tab.id)}} onDoubleClick={()=>renameQueryTab(tab.id)} title="双击重命名"><span>{tab.name}</span><button className="close-tab" onClick={event=>{event.stopPropagation();closeQueryTab(tab.id)}} aria-label={`关闭 ${tab.name}`}>×</button></div>)}<button className="add-query-tab" onClick={addQueryTab} title="新建查询">＋</button></div><Suspense fallback={<div className="editor-loading">正在加载 InfluxQL 编辑器…</div>}><QueryEditor tabId={activeQueryTab.id} value={sql} measurements={tables} schema={schema} onChange={setSql} onRun={command=>void runQuery(command)}/></Suspense></section>
       <section className="results"><div className="result-tabs"><div>{(['result','history','messages','favorites'] as ResultView[]).map(item => <button key={item} className={view === item ? 'active' : ''} onClick={() => setView(item)}>{({result:'执行结果',history:`执行记录 ${history.length}`,messages:'交互消息',favorites:`收藏 ${favorites.length}`})[item]}</button>)}</div>{view === 'result' && <div><button onClick={() => navigator.clipboard.writeText(JSON.stringify(rows, null, 2))}>复制</button><button onClick={exportCsv}>导出 CSV</button><button onClick={() => rows.length ? download(`geminidb-${Date.now()}.json`, 'application/json', JSON.stringify(rows, null, 2)) : toast('没有可导出的结果')}>导出 JSON</button></div>}</div><div className="result-body"><ResultContent view={view} rows={rows} history={history} favorites={favorites} onUseSql={value => { setSql(value); setView('result') }} onRemoveFavorite={id => { const next = favorites.filter(f => f.id !== id); setFavorites(next); save('gdb.favorites', next) }}/></div><div className="statusbar"><b className={resultStatus === 'ERROR' ? 'danger' : ''}>{resultStatus}</b><span>{resultMeta}</span></div></section>
     </main>
 
@@ -147,6 +164,20 @@ export default function App() {
     <aside className={`claude-drawer ${claudeOpen ? 'open' : ''}`}><div className="drawer-head"><b>✦ Claude Code</b><button onClick={() => setClaudeOpen(false)}>×</button></div><div className="drawer-body">{claudeAnswer ? <div className="assistant"><b>Claude Code</b><p>{claudeAnswer.answer}</p>{claudeAnswer.suggestedSql && <><pre>{claudeAnswer.suggestedSql}</pre><button onClick={() => { setSql(claudeAnswer.suggestedSql); setClaudeOpen(false) }}>采用建议 SQL</button></>}</div> : <div className="center">Claude Code 正在分析当前命令…</div>}</div><footer>当前上下文：{database} · 本地 Bridge</footer></aside>
     {message && <div className="toast">{message}</div>}
   </div>
+}
+
+type UiIconName = 'catalog' | 'chevron' | 'connection' | 'database' | 'layers' | 'search' | 'settings' | 'table'
+function UiIcon({ name, open = false }: { name: UiIconName; open?: boolean }) {
+  const paths: Record<Exclude<UiIconName, 'chevron'>, React.ReactNode> = {
+    catalog:<><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></>,
+    connection:<><path d="M8 12h8M7 8v8M17 8v8"/><path d="M4 9V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v4M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></>,
+    database:<><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7"/></>,
+    layers:<><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></>,
+    search:<><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></>,
+    settings:<><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></>,
+    table:<><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 9h18M8 9v11"/></>
+  }
+  return <svg className={`ui-icon ${name === 'chevron' && open ? 'open' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{name === 'chevron' ? <path d="m9 18 6-6-6-6"/> : paths[name]}</svg>
 }
 
 function PanelTitle({ title, count }: { title: string; count: number }) { return <div className="panel-title"><b>{title}</b><small>{count}</small></div> }
