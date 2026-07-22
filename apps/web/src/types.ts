@@ -4,3 +4,5 @@ export type Execution = { id: string; executedAt: number; sql: string; durationM
 export type Favorite = { id: string; name: string; sql: string; database: string }
 export type QueryResponse = { rows?: QueryRow[]; rowCount?: number; affectedRows?: number; durationMs: number; message?: string }
 export type MeasurementSchema = { fields: { name: string; type: string }[]; tags: string[] }
+export type ClaudeSettings = { provider: 'cli'|'api'; cliPath: string; endpoint: string; model: string; maxTokens: number }
+export type ClaudeDiagnosis = { summary: string; problems: { level: 'error'|'warning'|'info'; message: string }[]; fixedSql: string; performanceAdvice: string[]; risk: 'read'|'write'|'danger'; usage?: { inputTokens?: number; outputTokens?: number } }

@@ -1,6 +1,6 @@
 [package]
 name = "geminidb-studio"
-version = "0.2.0"
+version = "0.3.0"
 description = "GeminiDB Influx desktop query client"
 authors = ["GeminiDB Studio"]
 edition = "2021"

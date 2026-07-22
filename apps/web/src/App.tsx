@@ -4,15 +4,19 @@ import { load, save } from './storage'
 import { deleteCredential, loadCredential, saveCredential } from './credentials'
 import { filterDayTables, multiTableQuery, type DayRange } from './day-tables'
 import ResultsTable from './ResultsTable'
-import type { Connection, Execution, Favorite, MeasurementSchema, QueryRow } from './types'
+import { inspectInfluxQL, lineDiff, localFix } from './diagnostics'
+import { beginSession, clearWorkspace, endSession, readWorkspace, writeWorkspace } from './workspace'
+import { createDiagnosticProvider } from './diagnostic-provider'
+import type { ClaudeDiagnosis, ClaudeSettings, Connection, Execution, Favorite, MeasurementSchema, QueryRow } from './types'
 const QueryEditor = lazy(() => import('./QueryEditor'))
 
 const DEFAULT_CONNECTION: Connection = { id: 'mock', name: 'GeminiDB · 本地 Mock', mode: 'mock', environment:'dev', endpoint: '', username: 'demo', password: 'demo', autoLogin: true, readOnly: false, insecureSkipVerify: false }
 const DEFAULT_SQL = 'SELECT *\nFROM "t_maas_monitor_metrics_basic_m_1784563200"\nWHERE time >= now() - 1h\nORDER BY time DESC\nLIMIT 100'
 type SideTool = 'connections' | 'catalog'
-type ResultView = 'result' | 'history' | 'messages' | 'favorites'
+type ResultView = 'result' | 'chart' | 'history' | 'messages' | 'favorites'
 type QueryTab = { id: string; name: string; sql: string }
 const DEFAULT_TAB: QueryTab = { id: 'query-1', name: '查询 1', sql: DEFAULT_SQL }
+const UNCLEAN_SESSION = beginSession()
 
 function splitTable(name: string) { const match = name.match(/^(.*)_(\d{10})$/); return match ? { prefix: match[1], timestamp: Number(match[2]) } : { prefix: name, timestamp: null } }
 function day(timestamp: number | null) { return timestamp ? new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', dateStyle: 'medium' }).format(new Date(timestamp * 1000)) : '常驻表' }
@@ -25,22 +29,22 @@ export default function App() {
   const [connections, setConnections] = useState<Connection[]>(() => load('gdb.connections', [DEFAULT_CONNECTION]))
   const [activeConnection, setActiveConnection] = useState(() => load('gdb.activeConnection', 'mock'))
   const [databases, setDatabases] = useState<string[]>([])
-  const [database, setDatabase] = useState('monitoring')
+  const [database, setDatabase] = useState(() => load('gdb.workspace.database','monitoring'))
   const [tables, setTables] = useState<string[]>([])
-  const [selectedTable, setSelectedTable] = useState('')
+  const [selectedTable, setSelectedTable] = useState(() => load('gdb.workspace.measurement',''))
   const [schema, setSchema] = useState<MeasurementSchema>({ fields: [], tags: [] })
   const [schemaLoading, setSchemaLoading] = useState(false)
   const [databaseOpen, setDatabaseOpen] = useState(true)
   const [measurementsOpen, setMeasurementsOpen] = useState(true)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
   const [filter, setFilter] = useState('')
-  const [dayRange, setDayRange] = useState<DayRange>('all')
+  const [dayRange, setDayRange] = useState<DayRange>(()=>load('gdb.workspace.dayRange','all'))
   const [queryTabs, setQueryTabs] = useState<QueryTab[]>(() => { const tabs=load<QueryTab[]>('gdb.queryTabs',[DEFAULT_TAB]); return tabs.length ? tabs : [DEFAULT_TAB] })
   const [activeTabId, setActiveTabId] = useState(() => load('gdb.activeQueryTab','query-1'))
   const [rows, setRows] = useState<QueryRow[]>([])
   const [history, setHistory] = useState<Execution[]>(() => load('gdb.history', []))
   const [favorites, setFavorites] = useState<Favorite[]>(() => load('gdb.favorites', []))
-  const [view, setView] = useState<ResultView>('result')
+  const [view, setView] = useState<ResultView>(()=>load('gdb.workspace.resultView','result'))
   const [sideTool, setSideTool] = useState<SideTool>(() => load('gdb.sideTool', 'catalog'))
   const [sideOpen, setSideOpen] = useState(() => load('gdb.sideOpen', true))
   const [status, setStatus] = useState('等待连接')
@@ -55,7 +59,12 @@ export default function App() {
   const [connectionDialog, setConnectionDialog] = useState<Connection | null>(null)
   const [timeDialog, setTimeDialog] = useState(false)
   const [claudeOpen, setClaudeOpen] = useState(false)
-  const [claudeAnswer, setClaudeAnswer] = useState<{ answer: string; suggestedSql: string } | null>(null)
+  const [claudeAnswer, setClaudeAnswer] = useState<ClaudeDiagnosis | null>(null)
+  const [claudeLoading,setClaudeLoading]=useState(false),[claudeSettingsOpen,setClaudeSettingsOpen]=useState(false)
+  const [claudeSettings,setClaudeSettings]=useState<ClaudeSettings>(()=>{const defaults:ClaudeSettings={provider:'cli',cliPath:'claude',endpoint:'https://api.anthropic.com',model:'claude-sonnet-4-5',maxTokens:2048};return{...defaults,...load('gdb.claude.settings',defaults)}})
+  const [lastError,setLastError]=useState('')
+  const [recoveryOpen,setRecoveryOpen]=useState(UNCLEAN_SESSION)
+  const diagnosticAbort=useRef<AbortController|null>(null),diagnosticRequest=useRef(0)
 
   const currentConnection = connections.find(c => c.id === activeConnection) || connections[0]
   const activeQueryTab = queryTabs.find(tab => tab.id === activeTabId) || queryTabs[0]
@@ -67,6 +76,7 @@ export default function App() {
   function persistQueryTabs(next: QueryTab[]) { setQueryTabs(next); save('gdb.queryTabs',next) }
   function setSql(nextSql: string) { persistQueryTabs(queryTabs.map(tab => tab.id === activeQueryTab.id ? {...tab,sql:nextSql} : tab)) }
   function addQueryTab() { const id=crypto.randomUUID(),next=[...queryTabs,{id,name:`查询 ${queryTabs.length+1}`,sql:''}];persistQueryTabs(next);setActiveTabId(id);save('gdb.activeQueryTab',id) }
+  function openQueryTab(command:string) { const id=crypto.randomUUID(),next=[...queryTabs,{id,name:'诊断修复',sql:command}];persistQueryTabs(next);setActiveTabId(id);save('gdb.activeQueryTab',id);setClaudeOpen(false) }
   function selectQueryTab(id: string) { setActiveTabId(id); save('gdb.activeQueryTab',id) }
   function closeQueryTab(id: string) { if(queryTabs.length===1){persistQueryTabs([{...queryTabs[0],sql:'',name:'查询 1'}]);return}const index=queryTabs.findIndex(tab=>tab.id===id),next=queryTabs.filter(tab=>tab.id!==id);persistQueryTabs(next);if(id===activeTabId)selectQueryTab(next[Math.max(0,index-1)].id) }
   function renameQueryTab(id: string) { const current=queryTabs.find(tab=>tab.id===id);if(!current)return;const name=window.prompt('查询页签名称',current.name)?.trim();if(name)persistQueryTabs(queryTabs.map(tab=>tab.id===id?{...tab,name}:tab)) }
@@ -80,12 +90,17 @@ export default function App() {
       await bridge.login({ mode: connection.mode, endpoint: connection.endpoint, username: connection.username, password: connection.password || await loadCredential(connection.id) || '', insecureSkipVerify: connection.insecureSkipVerify, readOnly: connection.readOnly })
       const list = await bridge.databases()
       const nextDb = list.includes(database) ? database : list[0]
-      schemaRequest.current += 1; setSelectedTable(''); setSchema({ fields: [], tags: [] }); setSchemaLoading(false)
-      setDatabases(list); setDatabase(nextDb); setTables(await bridge.tables(nextDb)); setStatus(`${connection.name} 已连接`); toast('已登录并载入数据目录')
+      const nextTables=await bridge.tables(nextDb),restoredTable=nextDb===database&&nextTables.includes(selectedTable)?selectedTable:''
+      schemaRequest.current += 1; setSelectedTable(restoredTable); setSchema({ fields: [], tags: [] }); setSchemaLoading(false)
+      setDatabases(list); setDatabase(nextDb); setTables(nextTables); setStatus(`${connection.name} 已连接`); toast(restoredTable?'已恢复上次查询工作区':'已登录并载入数据目录');if(restoredTable)void loadSchema(restoredTable)
     } catch (error) { setStatus('连接失败'); toast(error instanceof Error ? error.message : '连接失败') }
   }
 
   useEffect(() => { if (currentConnection?.autoLogin) void connect({ ...DEFAULT_CONNECTION, ...currentConnection }) }, [])
+  useEffect(()=>{const close=()=>endSession();window.addEventListener('beforeunload',close);return()=>window.removeEventListener('beforeunload',close)},[])
+  useEffect(()=>{const timer=window.setTimeout(()=>{try{writeWorkspace({database,measurement:selectedTable,dayRange,resultView:view,activeConnection,activeTabId,queryTabs,sideTool,sideOpen})}catch{toast('工作区保存失败，请检查可用空间')}save('gdb.workspace.database',database);save('gdb.workspace.measurement',selectedTable);save('gdb.workspace.dayRange',dayRange);save('gdb.workspace.resultView',view)},500);return()=>window.clearTimeout(timer)},[database,selectedTable,dayRange,view,activeConnection,activeTabId,queryTabs,sideTool,sideOpen])
+  function restoreWorkspace(){const snapshot=readWorkspace();if(snapshot){setDatabase(snapshot.database);setSelectedTable(snapshot.measurement);setDayRange(snapshot.dayRange);setView(snapshot.resultView);setActiveConnection(snapshot.activeConnection);setActiveTabId(snapshot.activeTabId);setQueryTabs(snapshot.queryTabs);setSideTool(snapshot.sideTool);setSideOpen(snapshot.sideOpen)}setRecoveryOpen(false);toast('已恢复上次工作区')}
+  function discardWorkspace(){clearWorkspace();persistQueryTabs([DEFAULT_TAB]);setActiveTabId(DEFAULT_TAB.id);save('gdb.activeQueryTab',DEFAULT_TAB.id);setSelectedTable('');setView('result');setRecoveryOpen(false);toast('已创建新工作区')}
 
   async function changeDatabase(next: string) {
     if (!next || next === database) return
@@ -134,19 +149,21 @@ export default function App() {
     setRunning(true); setView('result'); setResultStatus('RUNNING'); const started = performance.now()
     try {
       const data = await bridge.query(database, command, controller.signal); const duration = data.durationMs || performance.now() - started
+      setLastError('')
       if (data.rows) { setRows(data.rows); setResultMeta(`${data.rows.length} rows · ${Math.round(duration)} ms`); addHistory(command, duration, 'success', `${data.rows.length} 行`) }
       else { setRows([]); setResultMeta(`${data.affectedRows || 0} affected · ${Math.round(duration)} ms`); addHistory(command, duration, 'success', `影响 ${data.affectedRows || 0} 行`) }
       setResultStatus('SUCCESS'); toast(data.rows ? '查询完成' : '写入完成')
     } catch (error) {
       const cancelled = error instanceof DOMException && error.name === 'AbortError'
       const text = cancelled ? (cancelReason.current === 'timeout' ? '查询超过 30 秒，已取消' : '查询已取消') : error instanceof Error ? error.message : '执行失败'
-      setRows([]); setResultStatus(cancelled ? 'CANCELLED' : 'ERROR'); setResultMeta(`${Math.round(performance.now() - started)} ms`); addHistory(command, performance.now() - started, cancelled ? 'cancelled' : 'error', text); toast(text)
+      setRows([]); setLastError(text); setResultStatus(cancelled ? 'CANCELLED' : 'ERROR'); setResultMeta(`${Math.round(performance.now() - started)} ms`); addHistory(command, performance.now() - started, cancelled ? 'cancelled' : 'error', text); toast(text)
     } finally { window.clearTimeout(timeout); queryAbort.current = null; cancelReason.current = null; setRunning(false) }
   }
   function cancelQuery() { cancelReason.current = 'user'; queryAbort.current?.abort() }
 
   function saveFavorite() { const name = window.prompt('收藏名称', `常用命令 · ${database}`); if (!name) return; const next = [{ id: crypto.randomUUID(), name, sql, database }, ...favorites]; setFavorites(next); save('gdb.favorites', next); toast('已加入收藏') }
-  async function askClaude() { setClaudeOpen(true); setClaudeAnswer(null); try { setClaudeAnswer(await bridge.ask(database, sql)) } catch (error) { setClaudeAnswer({ answer: error instanceof Error ? error.message : 'Claude Bridge 不可用', suggestedSql: '' }) } }
+  async function askClaude() { diagnosticAbort.current?.abort();const requestId=++diagnosticRequest.current,controller=new AbortController();diagnosticAbort.current=controller;setClaudeOpen(true);setClaudeAnswer(null);const localIssues=inspectInfluxQL(sql,schema),apiKey=claudeSettings.provider==='api'?await loadCredential('claude-api'):'';if(claudeSettings.provider==='api'&&!apiKey){setClaudeSettingsOpen(true);diagnosticAbort.current=null;return}setClaudeLoading(true);try{const provider=createDiagnosticProvider(claudeSettings,apiKey||''),result=await provider.diagnose({database,measurement:selectedTable,sql,error:lastError,schema,localIssues},controller.signal);if(requestId===diagnosticRequest.current)setClaudeAnswer(result)}catch(error){if(controller.signal.aborted){if(requestId===diagnosticRequest.current)toast('已取消查询诊断');return}if(requestId===diagnosticRequest.current)setClaudeAnswer({summary:error instanceof Error?error.message:'诊断服务不可用',problems:localIssues,fixedSql:localFix(sql),performanceAdvice:[],risk:/\b(write|drop|delete|alter|into)\b/i.test(sql)?'danger':'read'})}finally{if(requestId===diagnosticRequest.current){setClaudeLoading(false);diagnosticAbort.current=null}} }
+  function cancelDiagnosis(){diagnosticAbort.current?.abort();diagnosticAbort.current=null;setClaudeLoading(false)}
   function exportCsv() { if (!rows.length) return toast('没有可导出的结果'); const columns = Object.keys(rows[0]); const cell = (v: unknown) => `"${String(v ?? '').replaceAll('"', '""')}"`; download(`geminidb-${Date.now()}.csv`, 'text/csv;charset=utf-8', '\ufeff' + columns.map(cell).join(',') + '\n' + rows.map(row => columns.map(c => cell(row[c])).join(',')).join('\n')) }
   function exportExcel() { if(!rows.length)return toast('没有可导出的结果');const columns=Object.keys(rows[0]),xml=(value:unknown)=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');const content=`<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Worksheet ss:Name="GeminiDB"><Table><Row>${columns.map(c=>`<Cell><Data ss:Type="String">${xml(c)}</Data></Cell>`).join('')}</Row>${rows.map(row=>`<Row>${columns.map(c=>`<Cell><Data ss:Type="String">${xml(row[c])}</Data></Cell>`).join('')}</Row>`).join('')}</Table></Worksheet></Workbook>`;download(`geminidb-${Date.now()}.xls`,'application/vnd.ms-excel',content) }
 
@@ -161,13 +178,15 @@ export default function App() {
       <section className="side-panel"><PanelTitle title="数据目录" count={databases.length}/><div className="catalog-tools"><small>{database}<span>·</span>{filteredTables.length} 张天表</small><select value={dayRange} onChange={event=>setDayRange(event.target.value as DayRange)} title="按日期筛选"><option value="all">全部</option><option value="today">今天</option><option value="yesterday">昨天</option><option value="7d">近7天</option></select><button onClick={() => void connect()} title="刷新数据目录">↻</button></div><div className="search"><span><UiIcon name="search"/></span><input value={filter} onChange={e => setFilter(e.target.value)} placeholder="筛选 Measurement 或表名"/></div><div className="tree"><button className="tree-row selected tree-toggle" aria-expanded={databaseOpen} onClick={()=>setDatabaseOpen(value=>!value)}><UiIcon name="chevron" open={databaseOpen}/><UiIcon name="database"/><b>{database}</b><em>Database</em></button>{databaseOpen&&<><button className="tree-row level-1 tree-toggle" aria-expanded={measurementsOpen} onClick={()=>setMeasurementsOpen(value=>!value)}><UiIcon name="chevron" open={measurementsOpen}/><UiIcon name="layers"/><b>Measurements</b><em>{filteredTables.length}</em></button>{measurementsOpen&&Object.entries(tableGroups).map(([prefix, group]) => {const open=!collapsedGroups.has(prefix);return <div key={prefix}><button className="tree-row level-2 tree-toggle" aria-expanded={open} onClick={()=>toggleGroup(prefix)} onDoubleClick={()=>queryGroup(prefix,group)} title="双击生成当前日期范围的多天表查询"><UiIcon name="chevron" open={open}/><UiIcon name="table"/><b>{prefix}</b><em>{group.length}</em></button>{open&&group.toSorted().reverse().map(table => { const parsed = splitTable(table); return <button key={table} onClick={() => void chooseTable(table)} className={`tree-row table-row level-3 ${table === selectedTable ? 'selected' : ''}`}><span className="tree-guide"/><span><b>{day(parsed.timestamp)}</b><small>{table}</small></span></button> })}</div>})}</>}</div></section>}</div>
     </aside>
 
-    <main><section className="editor"><div className="editor-head"><div><h1>查询窗口</h1><span className="context">{database} / {selectedTable || '未选表'}</span>{selectedTable&&<button className="schema-refresh" disabled={schemaLoading} onClick={()=>void loadSchema(selectedTable,true)} title="刷新当前 Measurement 的 Field 和 Tag">{schemaLoading?'… Schema':'↻ Schema'}</button>}</div><div className="actions"><button className="claude" onClick={() => void askClaude()}>✦ 问 Claude Code</button><button onClick={saveFavorite}>☆ 收藏语句</button><button className={running ? 'danger' : 'primary'} onClick={running ? cancelQuery : () => void runQuery()}>{running ? '■ 取消查询' : '▶ 执行命令'}</button></div></div><div className="query-tabs" role="tablist">{queryTabs.map(tab=><div key={tab.id} role="tab" tabIndex={0} aria-selected={tab.id===activeQueryTab.id} className={`query-tab ${tab.id===activeQueryTab.id?'active':''}`} onClick={()=>selectQueryTab(tab.id)} onKeyDown={event=>{if(event.key==='Enter'||event.key===' ')selectQueryTab(tab.id)}} onDoubleClick={()=>renameQueryTab(tab.id)} title="双击重命名"><span>{tab.name}</span><button className="close-tab" onClick={event=>{event.stopPropagation();closeQueryTab(tab.id)}} aria-label={`关闭 ${tab.name}`}>×</button></div>)}<button className="add-query-tab" onClick={addQueryTab} title="新建查询">＋</button></div><Suspense fallback={<div className="editor-loading">正在加载 InfluxQL 编辑器…</div>}><QueryEditor tabId={activeQueryTab.id} value={sql} measurements={tables} schema={schema} onChange={setSql} onRun={command=>void runQuery(command)}/></Suspense></section>
-      <section className="results"><div className="result-tabs"><div>{(['result','history','messages','favorites'] as ResultView[]).map(item => <button key={item} className={view === item ? 'active' : ''} onClick={() => setView(item)}>{({result:'执行结果',history:`执行记录 ${history.length}`,messages:'交互消息',favorites:`收藏 ${favorites.length}`})[item]}</button>)}</div>{view === 'result' && <div><button onClick={() => navigator.clipboard.writeText(JSON.stringify(rows, null, 2))}>复制</button><button onClick={exportCsv}>CSV</button><button onClick={exportExcel}>Excel</button><button onClick={() => rows.length ? download(`geminidb-${Date.now()}.json`, 'application/json', JSON.stringify(rows, null, 2)) : toast('没有可导出的结果')}>JSON</button></div>}</div><div className="result-body"><ResultContent view={view} rows={rows} history={history} favorites={favorites} onUseSql={value => { setSql(value); setView('result') }} onRemoveFavorite={id => { const next = favorites.filter(f => f.id !== id); setFavorites(next); save('gdb.favorites', next) }}/></div><div className="statusbar"><b className={resultStatus === 'ERROR' ? 'danger' : ''}>{resultStatus}</b><span>{resultMeta}</span></div></section>
+    <main><section className="editor"><div className="editor-head"><div><h1>查询窗口</h1><span className="context">{database} / {selectedTable || '未选表'}</span>{selectedTable&&<button className="schema-refresh" disabled={schemaLoading} onClick={()=>void loadSchema(selectedTable,true)} title="刷新当前 Measurement 的 Field 和 Tag">{schemaLoading?'… Schema':'↻ Schema'}</button>}</div><div className="actions"><button className="claude" onClick={() => void askClaude()}>✦ 诊断查询</button><button onClick={saveFavorite}>☆ 收藏语句</button><button className={running ? 'danger' : 'primary'} onClick={running ? cancelQuery : () => void runQuery()}>{running ? '■ 取消查询' : '▶ 执行命令'}</button></div></div><div className="query-tabs" role="tablist">{queryTabs.map(tab=><div key={tab.id} role="tab" tabIndex={0} aria-selected={tab.id===activeQueryTab.id} className={`query-tab ${tab.id===activeQueryTab.id?'active':''}`} onClick={()=>selectQueryTab(tab.id)} onKeyDown={event=>{if(event.key==='Enter'||event.key===' ')selectQueryTab(tab.id)}} onDoubleClick={()=>renameQueryTab(tab.id)} title="双击重命名"><span>{tab.name}</span><button className="close-tab" onClick={event=>{event.stopPropagation();closeQueryTab(tab.id)}} aria-label={`关闭 ${tab.name}`}>×</button></div>)}<button className="add-query-tab" onClick={addQueryTab} title="新建查询">＋</button></div><Suspense fallback={<div className="editor-loading">正在加载 InfluxQL 编辑器…</div>}><QueryEditor tabId={activeQueryTab.id} value={sql} measurements={tables} schema={schema} onChange={setSql} onRun={command=>void runQuery(command)}/></Suspense></section>
+      <section className="results"><div className="result-tabs"><div>{(['result','chart','history','messages','favorites'] as ResultView[]).map(item => <button key={item} className={view === item ? 'active' : ''} onClick={() => setView(item)}>{({result:'执行结果',chart:'图表',history:`执行记录 ${history.length}`,messages:'交互消息',favorites:`收藏 ${favorites.length}`})[item]}</button>)}</div>{view === 'result' && <div><button onClick={() => navigator.clipboard.writeText(JSON.stringify(rows, null, 2))}>复制</button><button onClick={exportCsv}>CSV</button><button onClick={exportExcel}>Excel</button><button onClick={() => rows.length ? download(`geminidb-${Date.now()}.json`, 'application/json', JSON.stringify(rows, null, 2)) : toast('没有可导出的结果')}>JSON</button></div>}</div><div className="result-body"><ResultContent view={view} rows={rows} history={history} favorites={favorites} onUseSql={value => { setSql(value); setView('result') }} onRemoveFavorite={id => { const next = favorites.filter(f => f.id !== id); setFavorites(next); save('gdb.favorites', next) }}/></div><div className="statusbar"><b className={resultStatus === 'ERROR' ? 'danger' : ''}>{resultStatus}</b><span>{resultMeta}</span></div></section>
     </main>
 
     {connectionDialog && <ConnectionDialog connection={connectionDialog} onClose={() => setConnectionDialog(null)} onSave={connection => { const next = connections.some(c => c.id === connection.id) ? connections.map(c => c.id === connection.id ? connection : c) : [connection, ...connections]; persistConnections(next); setActiveConnection(connection.id); save('gdb.activeConnection', connection.id); setConnectionDialog(null); void connect(connection) }} onDuplicate={connection=>{const copy={...connection,id:crypto.randomUUID(),name:`${connection.name} 副本`};persistConnections([copy,...connections]);setConnectionDialog(copy)}} onDelete={connection=>{if(!window.confirm(`删除连接“${connection.name}”？`))return;const next=connections.filter(item=>item.id!==connection.id);persistConnections(next);void deleteCredential(connection.id);setConnectionDialog(null);if(activeConnection===connection.id&&next[0]){setActiveConnection(next[0].id);void connect(next[0])}}}/>} 
+    {recoveryOpen&&<div className="modal"><div className="dialog recovery-dialog"><h2>恢复查询工作区</h2><p>检测到上次未正常关闭。可以恢复查询页签和目录位置；不会自动执行 SQL。</p><div className="dialog-actions"><button onClick={discardWorkspace}>重新开始</button><button className="primary" onClick={restoreWorkspace}>恢复工作区</button></div></div></div>}
     {timeDialog && <TimeDialog onClose={() => setTimeDialog(false)}/>} 
-    <aside className={`claude-drawer ${claudeOpen ? 'open' : ''}`}><div className="drawer-head"><b>✦ Claude Code</b><button onClick={() => setClaudeOpen(false)}>×</button></div><div className="drawer-body">{claudeAnswer ? <div className="assistant"><b>Claude Code</b><p>{claudeAnswer.answer}</p>{claudeAnswer.suggestedSql && <><pre>{claudeAnswer.suggestedSql}</pre><button onClick={() => { setSql(claudeAnswer.suggestedSql); setClaudeOpen(false) }}>采用建议 SQL</button></>}</div> : <div className="center">Claude Code 正在分析当前命令…</div>}</div><footer>当前上下文：{database} · 本地 Bridge</footer></aside>
+    {claudeSettingsOpen&&<ClaudeSettingsDialog settings={claudeSettings} onClose={()=>setClaudeSettingsOpen(false)} onSave={(settings,key)=>{setClaudeSettings(settings);save('gdb.claude.settings',settings);if(key)void saveCredential('claude-api',key);setClaudeSettingsOpen(false);toast('诊断设置已保存')}}/>}
+    <aside className={`claude-drawer ${claudeOpen ? 'open' : ''}`}><div className="drawer-head"><b>✦ 查询诊断</b><span>{claudeLoading&&<button className="danger" onClick={cancelDiagnosis}>取消</button>}<button onClick={()=>setClaudeSettingsOpen(true)} title="诊断设置">设置</button><button onClick={() => {cancelDiagnosis();setClaudeOpen(false)}}>×</button></span></div><div className="drawer-body">{claudeLoading?<div className="center">正在检查语法、Schema 与性能…</div>:claudeAnswer?<DiagnosisPanel result={claudeAnswer} originalSql={sql} onOpen={openQueryTab} onReplace={fixed=>setSql(fixed)}/>:<div className="center"><div><b>诊断当前 InfluxQL</b><small>仅发送 SQL、错误和 Field/Tag Schema</small></div></div>}</div><footer>{claudeSettings.provider==='cli'?'本地 Claude CLI':'Anthropic API'} · {database}</footer></aside>
     {message && <div className="toast">{message}</div>}
   </div>
 }
@@ -189,6 +208,7 @@ function UiIcon({ name, open = false }: { name: UiIconName; open?: boolean }) {
 function PanelTitle({ title, count }: { title: string; count: number }) { return <div className="panel-title"><b>{title}</b><small>{count}</small></div> }
 
 function ResultContent({ view, rows, history, favorites, onUseSql, onRemoveFavorite }: { view: ResultView; rows: QueryRow[]; history: Execution[]; favorites: Favorite[]; onUseSql: (sql: string) => void; onRemoveFavorite: (id: string) => void }) {
+  if(view==='chart')return <div className="chart-placeholder"><div><span>⌁</span><b>图表可视化</b><p>后续将根据 time、数值 Field 和 Tag 自动生成时序图。</p><small>当前版本保留入口，不影响查询与结果导出。</small></div></div>
   if (view === 'history') return history.length ? <table><thead><tr><th>执行时间</th><th>命令语句</th><th>耗时</th><th>执行结果</th></tr></thead><tbody>{history.map(item => <tr key={item.id} onClick={() => onUseSql(item.sql)}><td>{formatTime(item.executedAt)}</td><td>{item.sql.replace(/\s+/g, ' ')}</td><td>{item.durationMs} ms</td><td className={item.status === 'success' ? 'success' : 'danger'}>{item.status === 'success' ? '成功' : item.status === 'cancelled' ? '已取消' : '失败'} · {item.result}</td></tr>)}</tbody></table> : <Empty text="还没有执行记录"/>
   if (view === 'messages') return history.length ? <div className="messages">{history.map(item => <pre key={item.id}>{`--------开始执行--------\n【执行命令】\n${item.sql}\n执行命令${item.status === 'success' ? '成功' : item.status === 'cancelled' ? '已取消' : '失败'}，耗时：[${item.durationMs}ms]！`}</pre>)}</div> : <Empty text="还没有交互消息"/>
   if (view === 'favorites') return favorites.length ? <div className="favorite-list">{favorites.map(item => <div className="favorite" key={item.id} onClick={() => onUseSql(item.sql)}><span><b>★ {item.name}</b><code>{item.sql.replace(/\s+/g, ' ')}</code></span><button onClick={e => { e.stopPropagation(); onRemoveFavorite(item.id) }}>×</button></div>)}</div> : <Empty text="还没有收藏语句"/>
@@ -196,6 +216,17 @@ function ResultContent({ view, rows, history, favorites, onUseSql, onRemoveFavor
   return <ResultsTable rows={rows}/>
 }
 function Empty({ text, sub }: { text: string; sub?: string }) { return <div className="center"><div><b>{text}</b>{sub && <small>{sub}</small>}</div></div> }
+
+function DiagnosisPanel({result,originalSql,onOpen,onReplace}:{result:ClaudeDiagnosis;originalSql:string;onOpen:(sql:string)=>void;onReplace:(sql:string)=>void}){
+  const changed=result.fixedSql.trim()&&result.fixedSql.trim()!==originalSql.trim(),danger=result.risk!=='read'
+  return <div className="diagnosis"><div className="diagnosis-summary"><small>{danger?'需要人工确认':'诊断完成'}</small><b>{result.summary}</b></div>{result.problems.length>0&&<section><h3>发现的问题</h3>{result.problems.map((issue,index)=><p key={index} className={`issue ${issue.level}`}><i/>{issue.message}</p>)}</section>}{changed&&<section><h3>SQL 差异</h3><pre className="sql-diff">{lineDiff(originalSql,result.fixedSql)}</pre><div className="diagnosis-actions"><button onClick={()=>navigator.clipboard.writeText(result.fixedSql)}>复制</button><button onClick={()=>onOpen(result.fixedSql)}>新页签打开</button><button className="primary" onClick={()=>onReplace(result.fixedSql)}>替换当前 SQL</button></div></section>}{result.performanceAdvice.length>0&&<section><h3>性能建议</h3><ul>{result.performanceAdvice.map((item,index)=><li key={index}>{item}</li>)}</ul></section>}{result.usage&&(result.usage.inputTokens||result.usage.outputTokens)&&<small className="usage">输入 {result.usage.inputTokens||0} · 输出 {result.usage.outputTokens||0} tokens</small>}{danger&&<p className="risk-note">诊断结果包含写入或高风险操作，只允许预览和替换，不会自动执行。</p>}</div>
+}
+
+function ClaudeSettingsDialog({settings,onClose,onSave}:{settings:ClaudeSettings;onClose:()=>void;onSave:(settings:ClaudeSettings,key:string)=>void}){
+  const [draft,setDraft]=useState(settings),[key,setKey]=useState(''),[testing,setTesting]=useState(false),[testResult,setTestResult]=useState('')
+  async function test(){setTesting(true);setTestResult('');try{const provider=createDiagnosticProvider(draft,key),result=await provider.probe();setTestResult(`${result.message}${result.version?` · ${result.version}`:''}`)}catch(error){setTestResult(error instanceof Error?error.message:'检测失败')}finally{setTesting(false)}}
+  return <div className="modal"><div className="dialog"><h2>查询诊断设置</h2><p>诊断是 GeminiDB 查询的辅助功能，不会自动执行建议 SQL。</p><div className="provider-choice"><button className={draft.provider==='cli'?'active':''} onClick={()=>setDraft({...draft,provider:'cli'})}><b>本地 CLI</b><small>使用本机 Claude Code</small></button><button className={draft.provider==='api'?'active':''} onClick={()=>setDraft({...draft,provider:'api'})}><b>Anthropic API</b><small>使用独立 API Key</small></button></div>{draft.provider==='cli'?<label>Claude 命令路径<input value={draft.cliPath} onChange={event=>setDraft({...draft,cliPath:event.target.value})} placeholder="claude"/></label>:<><label>API 地址<input value={draft.endpoint} onChange={event=>setDraft({...draft,endpoint:event.target.value})}/></label><label>API Key<input type="password" value={key} onChange={event=>setKey(event.target.value)} placeholder="留空表示保留已保存的 Key"/></label><div className="form-row"><label>模型<input value={draft.model} onChange={event=>setDraft({...draft,model:event.target.value})}/></label><label>最大输出<select value={draft.maxTokens} onChange={event=>setDraft({...draft,maxTokens:Number(event.target.value)})}><option>1024</option><option>2048</option><option>4096</option></select></label></div></>}{testResult&&<p className="setting-result">{testResult}</p>}<div className="privacy-note">发送内容仅限当前 SQL、错误信息和 Field/Tag Schema；不发送密码和查询结果。</div><div className="dialog-actions"><button disabled={testing} onClick={()=>void test()}>{testing?'检测中…':'测试'}</button><span><button onClick={onClose}>取消</button><button className="primary" onClick={()=>onSave(draft,key)}>保存</button></span></div></div></div>
+}
 
 function ConnectionDialog({ connection, onClose, onSave, onDuplicate, onDelete }: { connection: Connection; onClose: () => void; onSave: (connection: Connection) => void; onDuplicate:(connection:Connection)=>void; onDelete:(connection:Connection)=>void }) {
   const [draft, setDraft] = useState(connection)
