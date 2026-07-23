@@ -1,5 +1,13 @@
 # 更新日志
 
+## 0.3.12
+
+- 移除首次启动自带的“GeminiDB · 本地 Mock”，升级时自动清理旧 Mock 连接；
+- 新建连接仅提供 GeminiDB Influx，不再显示 Mock 模式或预填 `rwuser`；
+- 首次进入连接页显示空状态，默认查询改为 `SHOW DATABASES`；
+- Bridge 拒绝 Mock 登录，并将跨域访问限制为 Tauri 客户端与本地开发来源；
+- 保留真实连接，密码继续使用 Windows 凭据管理器等系统凭据库保存。
+
 ## 0.3.11
 
 - 数据目录现在完整显示 `SHOW DATABASES` 返回的全部数据库，不再只显示当前数据库；

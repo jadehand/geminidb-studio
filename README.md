@@ -1,6 +1,6 @@
 # GeminiDB Studio MVP
 
-本地 GeminiDB 可视化查询工作台。Bridge 同时支持 Mock 和真实 GeminiDB Influx（InfluxDB 1.x HTTP API）连接。
+本地 GeminiDB 可视化查询工作台，通过 Bridge 连接真实 GeminiDB Influx（InfluxDB 1.x HTTP API）实例。
 
 ## 启动
 
@@ -67,7 +67,7 @@ curl http://127.0.0.1:8790/health
 2. 打开“管理连接”。
 3. 连接模式选择“GeminiDB Influx”。
 4. 实例地址填写 `https://<负载均衡地址>:8635`；未启用 SSL 时使用 `http://`。
-5. 输入数据库用户名（默认管理员通常为 `rwuser`）和密码。
+5. 输入该实例实际配置的数据库用户名和密码；客户端不会预填或猜测账号。
 6. 仅在自签名证书测试环境中启用“忽略 TLS 证书校验”。
 
 Bridge 在登录时执行 `SHOW DATABASES` 验证连接，随后使用：
