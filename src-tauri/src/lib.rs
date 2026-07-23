@@ -53,7 +53,7 @@ fn start_bridge(app: &tauri::AppHandle) -> Result<(), String> {
 
     let (mut events, child) = app
         .shell()
-        .sidecar("binaries/geminidb-bridge")
+        .sidecar("geminidb-bridge")
         .map_err(|error| format!("找不到 GeminiDB Bridge：{error}"))?
         .args(["--parent-pid", &std::process::id().to_string()])
         .spawn()
@@ -113,8 +113,11 @@ fn bridge_status(app: tauri::AppHandle) -> BridgeStatus {
     let state = app.state::<BridgeProcess>();
     let running = *state.running.lock().unwrap();
     let error = state.error.lock().unwrap().clone();
-    let log_path = bridge_log_path(&app).map(|path| path.to_string_lossy().into_owned());
-    BridgeStatus { running, error, log_path }
+    BridgeStatus {
+        running,
+        error,
+        log_path: bridge_log_path(&app).map(|path| path.to_string_lossy().into_owned()),
+    }
 }
 
 #[tauri::command]
