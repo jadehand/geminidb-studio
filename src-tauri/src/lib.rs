@@ -111,11 +111,10 @@ fn stop_bridge(app: &tauri::AppHandle) {
 #[tauri::command]
 fn bridge_status(app: tauri::AppHandle) -> BridgeStatus {
     let state = app.state::<BridgeProcess>();
-    BridgeStatus {
-        running: *state.running.lock().unwrap(),
-        error: state.error.lock().unwrap().clone(),
-        log_path: bridge_log_path(&app).map(|path| path.to_string_lossy().into_owned()),
-    }
+    let running = *state.running.lock().unwrap();
+    let error = state.error.lock().unwrap().clone();
+    let log_path = bridge_log_path(&app).map(|path| path.to_string_lossy().into_owned());
+    BridgeStatus { running, error, log_path }
 }
 
 #[tauri::command]
