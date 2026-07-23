@@ -1,0 +1,59 @@
+.app,.app.sidebar-closed{min-width:0;grid-template-columns:var(--sidebar-width,340px) minmax(0,1fr)}
+.app.sidebar-closed{grid-template-columns:42px minmax(0,1fr)}
+main{min-width:0;grid-template-columns:minmax(0,1fr);container:workspace/inline-size}
+.editor,.results,.result-tabs,.result-body,.data-grid,.grid-scroll,.grid-pagination{min-width:0}
+.editor{overflow:hidden}
+.editor-head>div:first-child{min-width:0}
+.editor-head .context{max-width:min(42vw,420px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.query-more,.export-menu{display:none}
+.action-menu{position:relative}
+.action-menu>summary{list-style:none;cursor:pointer;border:1px solid #dbe1e8;background:#fff;color:#3c4654;border-radius:7px;padding:7px 10px;font-size:11px;white-space:nowrap}
+.action-menu>summary::-webkit-details-marker{display:none}
+.action-menu[open]>summary{background:#eef4fd;border-color:#b9cceb;color:#245cad}
+.action-menu>div{position:absolute;right:0;top:calc(100% + 5px);z-index:14;min-width:138px;padding:5px;background:#fff;border:1px solid #d9e0e8;border-radius:7px;box-shadow:0 12px 34px #17202c28}
+.action-menu>div button{display:block;width:100%;border:0;text-align:left;background:transparent;white-space:nowrap}
+.action-menu>div button:hover{background:#f1f5fa}
+.grid-tools>span i{font-style:normal;color:#4f73a4;margin-left:6px}
+.grid-scroll{scrollbar-gutter:stable;overscroll-behavior:contain}
+.grid-scroll:focus-visible{outline:2px solid #6b9de4;outline-offset:-2px}
+.grid-scroll::-webkit-scrollbar{width:12px;height:12px}
+.grid-scroll::-webkit-scrollbar-track{background:#edf1f5;border-top:1px solid #dce2e8}
+.grid-scroll::-webkit-scrollbar-thumb{background:#a7b3c1;border:3px solid #edf1f5;border-radius:8px}
+.grid-scroll::-webkit-scrollbar-thumb:hover{background:#77879a}
+.page-controls{display:flex;align-items:center;gap:7px}
+@container workspace (max-width:900px){
+  .editor{padding-inline:12px}
+  .wide-query-action,.wide-export-action{display:none}
+  .query-more,.export-menu{display:block}
+  .editor-head{gap:10px}
+  .editor-head .actions{margin-left:auto;flex:0 0 auto}
+  .result-tabs{padding-inline:12px}
+  .result-tabs>div:first-child{min-width:0;overflow-x:auto;overflow-y:hidden}
+  .result-tabs>div:first-child button{white-space:nowrap}
+  .result-actions{flex:0 0 auto}
+  .grid-pagination{height:auto;min-height:44px;flex:0 0 auto;flex-wrap:wrap;padding-block:6px}
+}
+@container workspace (max-width:660px){
+  .editor-head{align-items:flex-start}
+  .editor-head>div:first-child{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 7px}
+  .editor-head h1{grid-row:1/3}
+  .editor-head .context{max-width:100%}
+  .schema-refresh{justify-self:start}
+  .actions>button.primary,.actions>button.danger{font-size:0;padding-inline:10px}
+  .actions>button.primary::after{content:"▶ 执行";font-size:11px}
+  .actions>button.danger::after{content:"■ 取消";font-size:11px}
+  .result-tabs{height:46px;flex-basis:46px;gap:8px}
+  .grid-tools{height:auto;min-height:42px;flex-wrap:wrap}
+  .grid-tools>input{width:min(220px,55%)}
+  .grid-tools>span{width:100%;margin-left:0}
+  .grid-pagination>span{order:1;margin-right:auto}
+  .grid-pagination .page-size{order:2}
+  .grid-pagination .page-controls{order:3;width:100%;justify-content:flex-end}
+}
+@media(max-width:760px){
+  header{padding-inline:10px}
+  .brand b{display:none}
+  .topbar{min-width:0}
+  .topbar select{min-width:0;width:130px}
+  .connection-state{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+}

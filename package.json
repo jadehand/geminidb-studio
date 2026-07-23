@@ -1,0 +1,29 @@
+{
+  "name": "geminidb-studio",
+  "private": true,
+  "version": "0.3.8",
+  "workspaces": [
+    "apps/web"
+  ],
+  "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
+    "monaco-editor": "0.53.0"
+  },
+  "scripts": {
+    "dev:web": "npm --workspace @geminidb-studio/web run dev",
+    "dev:bridge": "node apps/bridge/server.mjs",
+    "dev:desktop-services": "node scripts/dev-desktop.mjs",
+    "build:sidecar": "node scripts/build-sidecar.mjs",
+    "build:desktop": "npm run build && npm run build:sidecar",
+    "desktop": "tauri dev",
+    "desktop:build": "tauri build",
+    "desktop:info": "tauri info",
+    "build": "npm --workspace @geminidb-studio/web run build",
+    "check": "npm --workspace @geminidb-studio/web run check",
+    "test:bridge": "node --test apps/bridge/*.test.mjs scripts/*.test.mjs"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
+    "@yao-pkg/pkg": "^6.21.0"
+  }
+}

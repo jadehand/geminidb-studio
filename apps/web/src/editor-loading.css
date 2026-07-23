@@ -1,0 +1,11 @@
+.editor-loading {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid #dce2e8;
+  border-radius: 0 0 8px 8px;
+  background: #fafbfc;
+  color: #7a8491;
+  font-size: 12px;
+}

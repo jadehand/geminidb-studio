@@ -1,0 +1,36 @@
+.bridge-alert {
+  position: fixed;
+  z-index: 40;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(760px, calc(100vw - 32px));
+  min-height: 44px;
+  padding: 7px 9px 7px 13px;
+  border: 1px solid #efb9bd;
+  border-radius: 9px;
+  background: #fff3f4;
+  color: #8f2932;
+  box-shadow: 0 8px 28px #70232b26;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.bridge-alert span { min-width: 0; }
+.bridge-alert b,
+.bridge-alert small { display: block; }
+.bridge-alert small {
+  margin-top: 2px;
+  font-size: 9px;
+  color: #a64e56;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bridge-alert button {
+  flex: 0 0 auto;
+  border-color: #dc7e86;
+  color: #8f2932;
+  background: #fff;
+}
