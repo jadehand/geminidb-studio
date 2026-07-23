@@ -22,6 +22,11 @@ function activeClause(value: string) {
   return matches.at(-1)?.[1].toUpperCase().replace(/\s+/g, ' ') || ''
 }
 
+function shouldTriggerSuggestions(value: string) {
+  const statement = value.split(';').at(-1) || ''
+  return /\b(?:SELECT|FROM|WHERE|GROUP\s+BY|ORDER\s+BY)\s+(?:"[^"]*)?$/i.test(statement)
+}
+
 function registerInfluxQL(monaco: Monaco) {
   if (languageFeaturesReady) return
   languageFeaturesReady = true
@@ -68,6 +73,11 @@ function registerInfluxQL(monaco: Monaco) {
     rules: [{ token: 'keyword', foreground: '245FC7', fontStyle: 'bold' }, { token: 'string', foreground: '16785F' }, { token: 'number', foreground: '9A5818' }],
     colors: { 'editor.background': '#FAFBFC', 'editorLineNumber.foreground': '#9AA3AD', 'editorLineNumber.activeForeground': '#526071', 'editor.selectionBackground': '#CFE0FF', 'editor.lineHighlightBackground': '#F3F6FA' }
   })
+  monaco.editor.defineTheme('geminidb-dark', {
+    base: 'vs-dark', inherit: true,
+    rules: [{ token:'keyword', foreground:'79AFFF', fontStyle:'bold' }, { token:'string', foreground:'72D0B3' }, { token:'number', foreground:'E8B778' }],
+    colors: { 'editor.background':'#171D25', 'editorLineNumber.foreground':'#667383', 'editorLineNumber.activeForeground':'#C1CBD7', 'editor.selectionBackground':'#294A70', 'editor.lineHighlightBackground':'#1D2631' }
+  })
 }
 
 function validate(monaco: Monaco, model: MonacoEditor.ITextModel) {
@@ -87,16 +97,35 @@ function validate(monaco: Monaco, model: MonacoEditor.ITextModel) {
   monaco.editor.setModelMarkers(model, 'influxql', markers)
 }
 
-type Props = { tabId: string; value: string; measurements: string[]; schema: MeasurementSchema; onChange: (value: string) => void; onRun: (sql: string) => void }
+type Props = { tabId: string; value: string; measurements: string[]; schema: MeasurementSchema; theme:'light'|'dark'; onChange: (value: string) => void; onRun: (sql: string) => void }
 
-export default function QueryEditor({ tabId, value, measurements, schema, onChange, onRun }: Props) {
+export default function QueryEditor({ tabId, value, measurements, schema, theme, onChange, onRun }: Props) {
   currentMeasurements = measurements
   currentSchema = schema
   const handleMount: OnMount = (editor, monaco) => {
     registerInfluxQL(monaco)
     const model = editor.getModel()
     if (model) validate(monaco, model)
-    editor.onDidChangeModelContent(() => { const activeModel=editor.getModel(); if (activeModel) validate(monaco,activeModel) })
+    editor.onDidChangeModelContent(event => {
+      const activeModel = editor.getModel()
+      if (!activeModel) return
+      validate(monaco, activeModel)
+      const position = editor.getPosition()
+      const typedTrigger = event.changes.some(change => change.text.endsWith(' ') || change.text.endsWith('"'))
+      if (!position || !typedTrigger) return
+      const beforeCursor = activeModel.getValueInRange({
+        startLineNumber:1,
+        startColumn:1,
+        endLineNumber:position.lineNumber,
+        endColumn:position.column,
+      })
+      if (shouldTriggerSuggestions(beforeCursor)) {
+        editor.trigger('influxql', 'editor.action.triggerSuggest', {})
+      }
+    })
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Space, () => {
+      editor.trigger('influxql', 'editor.action.triggerSuggest', {})
+    })
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
       const activeModel = editor.getModel()
       const selection = editor.getSelection()
@@ -104,5 +133,6 @@ export default function QueryEditor({ tabId, value, measurements, schema, onChan
       onRun(selected || activeModel?.getValue() || '')
     })
   }
-  return <div className="monaco-shell"><Editor path={`influxql:///${tabId}.sql`} language="sql" theme="geminidb-light" value={value} beforeMount={registerInfluxQL} onMount={handleMount} onChange={next => onChange(next || '')} options={{ automaticLayout:true, minimap:{enabled:false}, fontFamily:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize:12, lineHeight:22, lineNumbers:'on', lineNumbersMinChars:3, lineDecorationsWidth:8, padding:{top:10,bottom:28}, scrollBeyondLastLine:false, wordWrap:'off', tabSize:2, suggest:{showWords:false}, quickSuggestions:{other:true,comments:false,strings:true}, fixedOverflowWidgets:true, renderValidationDecorations:'on' }}/><div className="monaco-foot"><span>InfluxQL · {schema.fields.length} fields · {schema.tags.length} tags · 按语句上下文补全</span><span>选中后 Ctrl/Cmd + Enter 仅执行选中内容</span></div></div>
+  const schemaReady = schema.fields.length > 0 || schema.tags.length > 0
+  return <div className="monaco-shell"><Editor path={`influxql:///${tabId}.sql`} language="sql" theme={theme==='dark'?'geminidb-dark':'geminidb-light'} value={value} beforeMount={registerInfluxQL} onMount={handleMount} onChange={next => onChange(next || '')} options={{ automaticLayout:true, minimap:{enabled:false}, fontFamily:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize:12, lineHeight:22, lineNumbers:'on', lineNumbersMinChars:3, lineDecorationsWidth:8, padding:{top:10,bottom:30}, scrollBeyondLastLine:false, wordWrap:'off', tabSize:2, suggest:{showWords:false}, quickSuggestions:{other:true,comments:false,strings:true}, suggestOnTriggerCharacters:true, acceptSuggestionOnEnter:'on', fixedOverflowWidgets:true, renderValidationDecorations:'on' }}/><div className="monaco-foot"><span className={schemaReady?'schema-ready':'schema-empty'}>{schemaReady?`Schema 已就绪 · ${schema.fields.length} 字段 · ${schema.tags.length} 标签`:'尚未选择 Measurement'}</span><span><kbd>Ctrl</kbd> + <kbd>Space</kbd> 补全 · <kbd>Ctrl/Cmd</kbd> + <kbd>Enter</kbd> 执行</span></div></div>
 }

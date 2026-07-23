@@ -12,6 +12,7 @@ import './bridge-status.css'
 import './sidebar-resize.css'
 import './time-dialog.css'
 import './responsive-layout.css'
+import './theme.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode><App /></React.StrictMode>

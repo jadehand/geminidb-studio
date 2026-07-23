@@ -61,4 +61,5 @@ main{min-width:0;grid-template-columns:minmax(0,1fr);container:workspace/inline-
   .topbar{min-width:0}
   .topbar select{min-width:0;width:130px}
   .connection-state{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .utility-button b{display:none}
 }

@@ -1,4 +1,5 @@
-.time-dialog{width:min(580px,92vw);padding:0;overflow:hidden}
+.time-dialog{width:min(580px,92vw);padding:0;overflow:hidden;font-family:"Segoe UI Variable","Segoe UI","PingFang SC",sans-serif}
+.time-dialog button,.time-dialog input,.time-dialog select{font-family:inherit}
 .time-dialog-head{display:flex;align-items:flex-start;justify-content:space-between;padding:20px 22px 15px;border-bottom:1px solid #e7ebf0}
 .time-dialog-head h2{font-size:19px;letter-spacing:-.3px}
 .time-dialog-head p{margin:4px 0 0;color:#7a8592;font-size:10px}

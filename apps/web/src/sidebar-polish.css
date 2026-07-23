@@ -63,6 +63,10 @@
 }
 
 .panel-title b { font-weight: 650; }
+.panel-title-actions{display:flex;align-items:center;gap:7px}
+.panel-add{height:27px;padding:0 7px;border:0;background:transparent;color:#245f9f;font-size:11px}
+.panel-add:hover{background:#e1e7ee}
+.panel-add span{font-size:14px}
 .panel-title small,
 .tree-row em {
   min-width: 20px;
@@ -116,11 +120,6 @@
 .connection-item.active .connection-more,
 .connection-more:focus-visible { opacity: 1; }
 .connection-more:hover { background: #d5dce5; }
-.connection-footer { flex: 0 0 43px; padding: 6px; border-top: 1px solid var(--sidebar-border); }
-.add-row { height: 30px; padding: 0 8px; color: #315f92; border-radius: 4px; font-size: 12px; }
-.add-row:hover { background: var(--sidebar-hover); }
-.add-row span { display: inline-block; margin-right: 5px; font-size: 16px; vertical-align: -1px; }
-
 .catalog-tools { height: 34px; padding: 0 8px 0 12px; color: var(--sidebar-muted); border-bottom: 1px solid #e7eaee; }
 .catalog-tools small { font-size: 11px; }
 .catalog-tools small span { margin: 0 6px; color: #a2aab4; }
