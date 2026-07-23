@@ -2,6 +2,9 @@
 .app.sidebar-closed{grid-template-columns:42px minmax(0,1fr)}
 main{min-width:0;grid-template-columns:minmax(0,1fr);container:workspace/inline-size}
 .editor,.results,.result-tabs,.result-body,.data-grid,.grid-scroll,.grid-pagination{min-width:0}
+.result-tabs{overflow:hidden}
+.result-tabs>div:first-child{min-width:0;flex:1 1 0;overflow-x:auto;overflow-y:hidden}
+.result-actions{position:relative;z-index:3;flex:0 0 auto;padding-left:6px;background:#fff}
 .editor{overflow:hidden}
 .editor-head>div:first-child{min-width:0}
 .editor-head .context{max-width:min(42vw,420px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -49,6 +52,8 @@ main{min-width:0;grid-template-columns:minmax(0,1fr);container:workspace/inline-
   .grid-pagination>span{order:1;margin-right:auto}
   .grid-pagination .page-size{order:2}
   .grid-pagination .page-controls{order:3;width:100%;justify-content:flex-end}
+  .grid-scroll .pinned{position:static;box-shadow:none}
+  .grid-scroll td.pinned{background:#fff}
 }
 @media(max-width:760px){
   header{padding-inline:10px}

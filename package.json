@@ -1,7 +1,7 @@
 {
   "name": "geminidb-studio",
   "private": true,
-  "version": "0.3.9",
+  "version": "0.3.11",
   "workspaces": [
     "apps/web"
   ],
