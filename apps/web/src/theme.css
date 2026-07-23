@@ -68,3 +68,78 @@
 :root[data-theme="dark"] .context,
 :root[data-theme="dark"] .tree-row em{color:#aab6c5;background:#2a3440}
 :root[data-theme="dark"] .modal{background:#080c11a8}
+:root[data-theme="dark"] .query-tabs{
+  color:#aeb9c7;
+  background:#131920;
+  border-color:#394351;
+}
+:root[data-theme="dark"] .query-tab{
+  color:#aeb9c7;
+  background:transparent;
+}
+:root[data-theme="dark"] .query-tab:hover{color:#dce5ef;background:#202833}
+:root[data-theme="dark"] .query-tab.active{
+  color:#9fc5ff;
+  background:#171d25;
+}
+:root[data-theme="dark"] .query-tab .close-tab,
+:root[data-theme="dark"] .add-query-tab{color:#8996a6;background:transparent}
+:root[data-theme="dark"] .query-tab .close-tab:hover,
+:root[data-theme="dark"] .add-query-tab:hover{color:#dce5ef;background:#2b3542}
+:root[data-theme="dark"] .monaco-shell{
+  color:#d9e1ea;
+  background:#171d25;
+  border-color:#394351;
+}
+:root[data-theme="dark"] .monaco-foot{
+  color:#9aa7b7;
+  background:#171d25;
+  border-top:1px solid #2d3743;
+}
+:root[data-theme="dark"] .monaco-foot .schema-ready{color:#72c7aa}
+:root[data-theme="dark"] .monaco-foot .schema-empty{color:#8996a6}
+:root[data-theme="dark"] .monaco-foot kbd{
+  color:#c4cfdb;
+  background:#252f3b;
+  border-color:#465262;
+}
+:root[data-theme="dark"] .completion-help button{
+  color:#a9cbff;
+  background:#222d3a;
+  border-color:#465a70;
+}
+:root[data-theme="dark"] .completion-help button:hover{background:#2b3a4c}
+:root[data-theme="dark"] .monaco-editor,
+:root[data-theme="dark"] .monaco-editor-background,
+:root[data-theme="dark"] .monaco-editor .margin{background-color:#171d25!important}
+:root[data-theme="dark"] .result-tabs{color:#aab6c5;background:#171d25}
+:root[data-theme="dark"] .result-tabs button{background:transparent}
+:root[data-theme="dark"] .result-tabs>div:first-child button.active{color:#8fbdff;border-bottom-color:#5795eb}
+:root[data-theme="dark"] .result-body,
+:root[data-theme="dark"] .grid-scroll{background:#171d25}
+:root[data-theme="dark"] .grid-scroll th.pinned{background:#222a34}
+:root[data-theme="dark"] .grid-scroll tr:hover td.pinned{background:#202a35}
+:root[data-theme="dark"] .column-menu{
+  color:#d4dde8;
+  background:#202833;
+  border-color:#465262;
+  box-shadow:0 12px 32px #080c1166;
+}
+:root[data-theme="dark"] .messages pre,
+:root[data-theme="dark"] .conversion pre{
+  color:#d9e1ea;
+  background:#151b22;
+  border-color:#4a9c82;
+}
+:root[data-theme="dark"] .favorite{
+  color:#d4dde8;
+  background:#1b222b;
+  border-color:#3a4552;
+}
+:root[data-theme="dark"] .favorite:hover{background:#232d38}
+:root[data-theme="dark"] .favorite code{color:#9ca9b9}
+:root[data-theme="dark"] .assistant{color:#e2d8d1;background:#29231f;border-color:#5c493e}
+:root[data-theme="dark"] ::-webkit-scrollbar{width:11px;height:11px}
+:root[data-theme="dark"] ::-webkit-scrollbar-track{background:#171d25}
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb{background:#3a4654;border:3px solid #171d25;border-radius:8px}
+:root[data-theme="dark"] ::-webkit-scrollbar-thumb:hover{background:#4a5868}

@@ -77,7 +77,23 @@ function registerInfluxQL(monaco: Monaco) {
   monaco.editor.defineTheme('geminidb-dark', {
     base: 'vs-dark', inherit: true,
     rules: [{ token:'keyword', foreground:'79AFFF', fontStyle:'bold' }, { token:'string', foreground:'72D0B3' }, { token:'number', foreground:'E8B778' }],
-    colors: { 'editor.background':'#171D25', 'editorLineNumber.foreground':'#667383', 'editorLineNumber.activeForeground':'#C1CBD7', 'editor.selectionBackground':'#294A70', 'editor.lineHighlightBackground':'#1D2631' }
+    colors: {
+      'editor.background':'#171D25',
+      'editorGutter.background':'#171D25',
+      'editorLineNumber.foreground':'#667383',
+      'editorLineNumber.activeForeground':'#C1CBD7',
+      'editor.selectionBackground':'#294A70',
+      'editor.lineHighlightBackground':'#1D2631',
+      'editorWidget.background':'#202833',
+      'editorWidget.border':'#465262',
+      'editorHoverWidget.background':'#202833',
+      'editorHoverWidget.border':'#465262',
+      'editorSuggestWidget.background':'#202833',
+      'editorSuggestWidget.border':'#465262',
+      'editorSuggestWidget.foreground':'#D9E1EA',
+      'editorSuggestWidget.selectedBackground':'#294A70',
+      'editorSuggestWidget.highlightForeground':'#8FBDFF',
+    }
   })
 }
 
