@@ -2,6 +2,7 @@ import Editor, { loader, type Monaco, type OnMount } from '@monaco-editor/react'
 import type { editor as MonacoEditor, Position } from 'monaco-editor'
 import * as monacoApi from 'monaco-editor/esm/vs/editor/editor.api'
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
+import { useRef } from 'react'
 import 'monaco-editor/esm/vs/basic-languages/sql/sql.contribution'
 import type { MeasurementSchema } from './types'
 import { findTimeHover } from './influxql-time-hover'
@@ -102,7 +103,14 @@ type Props = { tabId: string; value: string; measurements: string[]; schema: Mea
 export default function QueryEditor({ tabId, value, measurements, schema, theme, onChange, onRun }: Props) {
   currentMeasurements = measurements
   currentSchema = schema
+  const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null)
+  const openSuggestions = (editor = editorRef.current) => {
+    if (!editor) return
+    editor.focus()
+    void editor.getAction('editor.action.triggerSuggest')?.run()
+  }
   const handleMount: OnMount = (editor, monaco) => {
+    editorRef.current = editor
     registerInfluxQL(monaco)
     const model = editor.getModel()
     if (model) validate(monaco, model)
@@ -120,11 +128,11 @@ export default function QueryEditor({ tabId, value, measurements, schema, theme,
         endColumn:position.column,
       })
       if (shouldTriggerSuggestions(beforeCursor)) {
-        editor.trigger('influxql', 'editor.action.triggerSuggest', {})
+        openSuggestions(editor)
       }
     })
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Space, () => {
-      editor.trigger('influxql', 'editor.action.triggerSuggest', {})
+      openSuggestions(editor)
     })
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
       const activeModel = editor.getModel()
@@ -134,5 +142,5 @@ export default function QueryEditor({ tabId, value, measurements, schema, theme,
     })
   }
   const schemaReady = schema.fields.length > 0 || schema.tags.length > 0
-  return <div className="monaco-shell"><Editor path={`influxql:///${tabId}.sql`} language="sql" theme={theme==='dark'?'geminidb-dark':'geminidb-light'} value={value} beforeMount={registerInfluxQL} onMount={handleMount} onChange={next => onChange(next || '')} options={{ automaticLayout:true, minimap:{enabled:false}, fontFamily:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize:12, lineHeight:22, lineNumbers:'on', lineNumbersMinChars:3, lineDecorationsWidth:8, padding:{top:10,bottom:30}, scrollBeyondLastLine:false, wordWrap:'off', tabSize:2, suggest:{showWords:false}, quickSuggestions:{other:true,comments:false,strings:true}, suggestOnTriggerCharacters:true, acceptSuggestionOnEnter:'on', fixedOverflowWidgets:true, renderValidationDecorations:'on' }}/><div className="monaco-foot"><span className={schemaReady?'schema-ready':'schema-empty'}>{schemaReady?`Schema 已就绪 · ${schema.fields.length} 字段 · ${schema.tags.length} 标签`:'尚未选择 Measurement'}</span><span><kbd>Ctrl</kbd> + <kbd>Space</kbd> 补全 · <kbd>Ctrl/Cmd</kbd> + <kbd>Enter</kbd> 执行</span></div></div>
+  return <div className="monaco-shell"><Editor path={`influxql:///${tabId}.sql`} language="sql" theme={theme==='dark'?'geminidb-dark':'geminidb-light'} value={value} beforeMount={registerInfluxQL} onMount={handleMount} onChange={next => onChange(next || '')} options={{ automaticLayout:true, minimap:{enabled:false}, fontFamily:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize:12, lineHeight:22, lineNumbers:'on', lineNumbersMinChars:3, lineDecorationsWidth:8, padding:{top:10,bottom:30}, scrollBeyondLastLine:false, wordWrap:'off', tabSize:2, suggest:{showWords:false}, quickSuggestions:{other:true,comments:false,strings:true}, suggestOnTriggerCharacters:true, acceptSuggestionOnEnter:'on', fixedOverflowWidgets:true, renderValidationDecorations:'on' }}/><div className="monaco-foot"><span className={schemaReady?'schema-ready':'schema-empty'}>{schemaReady?`Schema 已就绪 · ${schema.fields.length} 字段 · ${schema.tags.length} 标签`:'尚未选择 Measurement'}</span><span className="completion-help"><button type="button" onMouseDown={event=>{event.preventDefault();openSuggestions()}}>显示补全</button><kbd>Ctrl</kbd> + <kbd>Space</kbd><i>·</i><kbd>Ctrl/Cmd</kbd> + <kbd>Enter</kbd> 执行</span></div></div>
 }

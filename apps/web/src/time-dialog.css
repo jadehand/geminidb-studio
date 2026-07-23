@@ -1,5 +1,5 @@
 .time-dialog{width:min(580px,92vw);padding:0;overflow:hidden;font-family:"Segoe UI Variable","Segoe UI","PingFang SC",sans-serif}
-.time-dialog button,.time-dialog input,.time-dialog select{font-family:inherit}
+.time-dialog button,.time-dialog input,.time-dialog select{font-family:inherit;font-size:11px;line-height:1.4}
 .time-dialog-head{display:flex;align-items:flex-start;justify-content:space-between;padding:20px 22px 15px;border-bottom:1px solid #e7ebf0}
 .time-dialog-head h2{font-size:19px;letter-spacing:-.3px}
 .time-dialog-head p{margin:4px 0 0;color:#7a8592;font-size:10px}
@@ -12,7 +12,7 @@
 .time-input-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px}
 .time-input-row.timestamp-mode{grid-template-columns:minmax(0,1fr) auto}
 .time-input-row select,.time-input-row input{height:40px;border:1px solid #d4dce6;border-radius:7px;background:#fff;padding:0 10px;margin:0}
-.time-input-row select{width:136px;color:#344151}
+.time-input-row select{width:136px;color:#344151;font-size:11px;font-weight:400}
 .time-input-row input{width:100%;font:12px ui-monospace,SFMono-Regular,Consolas,monospace}
 .time-input-hint{min-height:18px;margin:6px 0 2px;color:#89939f;font-size:9px}
 .time-input-hint.error{color:#c94f58}
