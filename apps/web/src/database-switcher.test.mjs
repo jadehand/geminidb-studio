@@ -11,7 +11,7 @@ test('顶部明确标注 Database，并提示无需执行 USE',()=>{
 })
 
 test('首次提示只在多个 Database 时显示，并可永久关闭',()=>{
-  assert.match(source,/databaseHintOpen&&databases\.length>1/)
+  assert.match(source,/databaseHintOpen&&!tourOpen&&tourStatus!=='new'&&databases\.length>1/)
   assert.match(source,/save\('gdb\.databaseSwitcherSeen',true\)/)
   assert.match(source,/onClick=\{dismissDatabaseHint\}>知道了/)
   assert.match(source,/async function changeDatabase[\s\S]*dismissDatabaseHint\(\)/)

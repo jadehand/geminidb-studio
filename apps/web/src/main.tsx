@@ -15,6 +15,7 @@ import './connection-dialog.css'
 import './favorite-dialog.css'
 import './history-table.css'
 import './database-switcher.css'
+import './feature-tour.css'
 import './responsive-layout.css'
 import './theme.css'
 
