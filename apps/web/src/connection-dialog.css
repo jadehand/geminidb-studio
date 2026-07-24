@@ -1,0 +1,53 @@
+.connection-dialog{
+  width:min(570px,94vw);
+  padding:0;
+  overflow:hidden;
+  font-family:"Segoe UI Variable","Segoe UI","Microsoft YaHei UI","PingFang SC",sans-serif;
+}
+.connection-dialog-head{padding:20px 22px 15px;border-bottom:1px solid #e5eaf0}
+.connection-dialog-head h2{margin:0;color:#202a36;font-size:20px;line-height:1.25;font-weight:680;letter-spacing:-.2px}
+.connection-dialog-head p{margin:5px 0 0;color:#758190;font-size:10px;line-height:1.5}
+.connection-form{padding:16px 22px 13px}
+.connection-form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px}
+.connection-form-row.protocol-row{grid-template-columns:.82fr 1.18fr}
+.connection-form label{display:block;margin:0;color:#4f5c6b;font-size:10px;font-weight:620}
+.connection-form input,.connection-form select{width:100%;height:38px;margin:6px 0 0;padding:0 10px;border:1px solid #d4dce6;border-radius:7px;background:#fff;color:#273443;font-family:inherit;font-size:11px;line-height:1.4}
+.connection-form input::placeholder{color:#a0a9b4}
+.password-field{position:relative}
+.password-field input{padding-right:48px}
+.password-field button{position:absolute;right:5px;top:11px;height:28px;padding:0 7px;border:0;background:transparent;color:#4e72a6;font-size:10px}
+.connection-options{margin:2px 0 0;padding:10px 12px 8px;border:1px solid #e2e7ed;border-radius:8px;background:#f9fafc}
+.connection-options legend{padding:0 5px;color:#687584;font-size:9px;font-weight:650}
+.connection-option{display:flex!important;align-items:flex-start;gap:8px;padding:5px 2px;color:#3f4b59!important}
+.connection-option input{width:14px!important;height:14px!important;flex:0 0 14px;margin:2px 0 0!important}
+.connection-option span,.connection-option b,.connection-option small{display:block}
+.connection-option b{font-size:10px;font-weight:620}
+.connection-option small{margin-top:2px;color:#8994a1;font-size:9px;font-weight:400;line-height:1.4}
+.warning-option small{color:#9a7350}
+.connection-dialog-actions{min-height:58px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 22px 13px;border-top:1px solid #e8ecf1}
+.connection-test,.connection-primary-actions{display:flex;align-items:center;gap:7px}
+.connection-test{min-width:0}
+.connection-test span{max-width:180px;overflow:hidden;font-size:9px;text-overflow:ellipsis;white-space:nowrap}
+.connection-primary-actions{justify-content:flex-end}
+.connection-dialog-actions button{height:32px;padding:0 10px}
+@media(max-width:620px){
+  .connection-form-row,.connection-form-row.protocol-row{grid-template-columns:1fr}
+  .connection-dialog{max-height:94vh;overflow:auto}
+  .connection-dialog-actions{align-items:stretch;flex-direction:column}
+  .connection-primary-actions{flex-wrap:wrap}
+}
+:root[data-theme="dark"] .connection-dialog{color:#d9e1ea;background:#1d252f}
+:root[data-theme="dark"] .connection-dialog-head{border-color:#394350}
+:root[data-theme="dark"] .connection-dialog-head h2{color:#e2e9f1}
+:root[data-theme="dark"] .connection-dialog-head p{color:#98a5b5}
+:root[data-theme="dark"] .connection-form label{color:#b6c1ce}
+:root[data-theme="dark"] .connection-form input,
+:root[data-theme="dark"] .connection-form select{color:#d9e1ea;background:#222b36;border-color:#465262}
+:root[data-theme="dark"] .connection-form input::placeholder{color:#718092}
+:root[data-theme="dark"] .password-field button{color:#9fc5ff;background:transparent}
+:root[data-theme="dark"] .connection-options{background:#202833;border-color:#3d4856}
+:root[data-theme="dark"] .connection-options legend{color:#9aa7b7}
+:root[data-theme="dark"] .connection-option{color:#d3dce6!important}
+:root[data-theme="dark"] .connection-option small{color:#8f9bab}
+:root[data-theme="dark"] .warning-option small{color:#d2a77d}
+:root[data-theme="dark"] .connection-dialog-actions{border-color:#394350}

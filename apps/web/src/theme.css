@@ -2,6 +2,7 @@
 .utility-button{height:35px;display:flex;align-items:center;gap:6px;padding:0 10px;background:#fff;border-color:#ccd7e5;white-space:nowrap}
 .utility-button span{font-size:15px;line-height:1}
 .utility-button b{font-size:11px;font-weight:600}
+.topbar select,.topbar select option{font-family:"Segoe UI Variable","Segoe UI","Microsoft YaHei UI","PingFang SC",sans-serif;font-size:12px;font-weight:400}
 :root[data-theme="dark"]{color-scheme:dark;color:#d9e1ea;background:#11161d}
 :root[data-theme="dark"] .app{background:#313a46}
 :root[data-theme="dark"] header,
