@@ -4,6 +4,7 @@ import * as monacoApi from 'monaco-editor/esm/vs/editor/editor.api'
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 import { useEffect, useRef, useState } from 'react'
 import 'monaco-editor/esm/vs/basic-languages/sql/sql.contribution'
+import 'monaco-editor/esm/vs/editor/contrib/suggest/browser/suggestController'
 import type { MeasurementSchema } from './types'
 import { findTimeHover } from './influxql-time-hover'
 import { completionContext, measurementFromQuery, shouldAutoSuggest } from './influxql-completion'
@@ -130,31 +131,36 @@ export default function QueryEditor({ tabId, value, measurements, selectedMeasur
     return()=>{active=false}
   },[activeMeasurement,resolveSchema,schema,selectedMeasurement])
   useEffect(()=>()=>{modelContexts.delete(monacoApi.Uri.parse(modelUri).toString());if(suggestTimer.current)window.clearTimeout(suggestTimer.current)},[modelUri])
-  const openSuggestions = (editor = editorRef.current) => {
+  const openSuggestions = (editor = editorRef.current, focus = true) => {
     if (!editor) return
-    editor.focus()
-    void editor.getAction('editor.action.triggerSuggest')?.run()
+    if(focus)editor.focus()
+    editor.trigger('geminidb-studio','editor.action.triggerSuggest',{})
   }
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor
     registerInfluxQL(monaco)
     const model = editor.getModel()
     if (model) validate(monaco, model)
-    editor.onDidChangeModelContent(event => {
+    editor.onDidChangeModelContent(() => {
       const activeModel = editor.getModel()
       if (!activeModel) return
       validate(monaco, activeModel)
+    })
+    editor.onKeyUp(event=>{
+      const activeModel=editor.getModel()
       const position = editor.getPosition()
-      if (!position) return
+      if(!activeModel||!position)return
+      const text=event.browserEvent.key
+      if(text.length!==1)return
       const beforeCursor = activeModel.getValueInRange({
         startLineNumber:1,
         startColumn:1,
         endLineNumber:position.lineNumber,
         endColumn:position.column,
       })
-      if (!event.changes.some(change=>shouldAutoSuggest(beforeCursor,change.text))) return
+      if(!shouldAutoSuggest(beforeCursor,text))return
       if(suggestTimer.current)window.clearTimeout(suggestTimer.current)
-      suggestTimer.current=window.setTimeout(()=>openSuggestions(editor),80)
+      suggestTimer.current=window.setTimeout(()=>openSuggestions(editor,false),20)
     })
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Space, () => {
       openSuggestions(editor)
