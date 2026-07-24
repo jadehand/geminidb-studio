@@ -79,6 +79,7 @@ export default function App() {
   const [bridgeStatus,setBridgeStatus]=useState<DesktopBridgeStatus|null>(null)
   const [bridgeRetrying,setBridgeRetrying]=useState(false)
   const [exportDirectory,setExportDirectory]=useState(()=>load('gdb.exportDirectory',''))
+  const [databaseHintOpen,setDatabaseHintOpen]=useState(()=>!load('gdb.databaseSwitcherSeen',false))
   const diagnosticAbort=useRef<AbortController|null>(null),diagnosticRequest=useRef(0)
 
   const currentConnection = connections.find(c => c.id === activeConnection) || connections[0]
@@ -156,9 +157,11 @@ export default function App() {
   function restoreWorkspace(){const snapshot=readWorkspace();if(snapshot){setDatabase(snapshot.database);setSelectedTable(snapshot.measurement);setDayRange(snapshot.dayRange);setView(snapshot.resultView);setActiveConnection(snapshot.activeConnection);setActiveTabId(snapshot.activeTabId);setQueryTabs(snapshot.queryTabs);setSideTool(snapshot.sideTool);setSideOpen(snapshot.sideOpen)}setRecoveryOpen(false);toast('已恢复上次工作区')}
   function discardWorkspace(){clearWorkspace();persistQueryTabs([DEFAULT_TAB]);setActiveTabId(DEFAULT_TAB.id);save('gdb.activeQueryTab',DEFAULT_TAB.id);setSelectedTable('');setView('result');setRecoveryOpen(false);toast('已创建新工作区')}
   function cycleTheme(){const next=nextTheme(themePreference);setThemePreference(next);save('gdb.theme',next);toast(`主题：${THEME_LABEL[next]}`)}
+  function dismissDatabaseHint(){setDatabaseHintOpen(false);save('gdb.databaseSwitcherSeen',true)}
 
   async function changeDatabase(next: string) {
     if (!next || next === database) return
+    dismissDatabaseHint()
     const started = performance.now()
     try {
       await bridge.query(database, `USE \`${next}\``)
@@ -254,7 +257,7 @@ export default function App() {
   return <div className={`app ${sideOpen ? '' : 'sidebar-closed'}`} style={{'--sidebar-width':`${sidebarWidth}px`} as React.CSSProperties}>
     {bridgeStatus&&!bridgeStatus.running&&<div className="bridge-alert" role="alert"><span><b>GeminiDB Bridge 启动失败</b><small>{bridgeStatus.error||'后台服务不可用，客户端仍可打开。'}{bridgeStatus.logPath&&<> · 日志：{bridgeStatus.logPath}</>}</small></span><button disabled={bridgeRetrying} onClick={()=>void retryBridge()}>{bridgeRetrying?'正在重试…':'重试 Bridge'}</button></div>}
     <header><div className="brand"><span className="brand-mark"/><b>GeminiDB Studio</b></div><div className="topbar">
-      <select value={database} onChange={e => void changeDatabase(e.target.value)} disabled={!databases.length}>{databases.map(db => <option key={db}>{db}</option>)}</select>
+      <div className="database-switcher"><label><span>Database</span><select aria-label="当前 Database" title="切换当前 Database，无需执行 USE 命令" value={database} onChange={e => void changeDatabase(e.target.value)} disabled={!databases.length}>{databases.map(db => <option key={db}>{db}</option>)}</select></label>{databaseHintOpen&&databases.length>1&&<div className="database-coachmark" role="status"><b>切换 Database</b><p>可直接在这里选择，无需执行 <code>USE database_xxx</code>。</p><button onClick={dismissDatabaseHint}>知道了</button></div>}</div>
       <button className="utility-button time-tool" onClick={() => setTimeDialog(true)} title="UTC、北京时间与 Unix 时间戳互相转换"><span>◷</span><b>时间转换</b></button><button className="utility-button theme-tool" onClick={cycleTheme} title={`当前：${THEME_LABEL[themePreference]}；点击切换主题`}><span>{resolvedTheme==='dark'?'☾':'◐'}</span><b>{THEME_LABEL[themePreference]}</b></button><button className={`connection-state connection-control env-${currentConnection?.environment||'dev'} ${status.includes('失败') ? 'error' : ''}`} onClick={() => currentConnection && setConnectionDialog(currentConnection)} title="编辑当前连接"><i/>{status}<UiIcon name="settings"/></button>
     </div></header>
 
