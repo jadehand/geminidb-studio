@@ -10,6 +10,11 @@ export const TOUR_STORAGE_KEY = 'gdb.onboarding.v1.status'
 
 export const TOUR_STEPS: TourStep[] = [
   {
+    target: 'new-connection',
+    title: '新建 GeminiDB 连接',
+    description: '先从这里添加连接，填写实例地址、用户名和密码；保存后即可载入 Database。'
+  },
+  {
     target: 'database-switcher',
     title: '直接切换 Database',
     description: '在这里选择当前 Database，无需再执行 USE database_xxx。'
