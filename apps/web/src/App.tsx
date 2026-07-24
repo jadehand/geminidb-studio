@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { bridge } from './api'
 import { load, save } from './storage'
 import { deleteCredential, loadCredential, saveCredential } from './credentials'
@@ -62,6 +62,7 @@ export default function App() {
   const [running, setRunning] = useState(false)
   const queryAbort = useRef<AbortController | null>(null)
   const schemaCache = useRef(new Map<string, MeasurementSchema>())
+  const schemaPending = useRef(new Map<string, Promise<MeasurementSchema>>())
   const schemaRequest = useRef(0)
   const cancelReason = useRef<'user' | 'timeout' | null>(null)
   const [connectionDialog, setConnectionDialog] = useState<Connection | null>(null)
@@ -83,6 +84,19 @@ export default function App() {
   const activeQueryTab = queryTabs.find(tab => tab.id === activeTabId) || queryTabs[0]
   const sql = activeQueryTab?.sql || ''
   const filteredTables = useMemo(() => filterDayTables(tables,dayRange).filter(t => t.toLowerCase().includes(filter.toLowerCase())), [tables, filter, dayRange])
+  const resolveSchema = useCallback(async (table:string) => {
+    const key = `${activeConnection}\u0000${database}\u0000${table}`
+    const cached = schemaCache.current.get(key)
+    if (cached) return cached
+    const pending = schemaPending.current.get(key)
+    if (pending) return pending
+    const request = bridge.schema(database, table).then(nextSchema => {
+      schemaCache.current.set(key, nextSchema)
+      return nextSchema
+    }).finally(() => schemaPending.current.delete(key))
+    schemaPending.current.set(key, request)
+    return request
+  },[activeConnection,database])
   const tableGroups = useMemo(() => filteredTables.reduce<Record<string, string[]>>((all, table) => { const prefix = splitTable(table).prefix; (all[prefix] ||= []).push(table); return all }, {}), [filteredTables])
 
   function toast(text: string) { setMessage(text); window.setTimeout(() => setMessage(''), 1800) }
@@ -168,14 +182,12 @@ export default function App() {
   }
 
   async function loadSchema(table: string, force = false) {
-    const key = `${currentConnection?.id || activeConnection}\u0000${database}\u0000${table}`
     const requestId = ++schemaRequest.current
-    const cached = schemaCache.current.get(key)
-    if (cached && !force) { setSchema(cached); setSchemaLoading(false); return }
+    const key = `${activeConnection}\u0000${database}\u0000${table}`
+    if (force) schemaCache.current.delete(key)
     setSchema({ fields: [], tags: [] }); setSchemaLoading(true)
     try {
-      const nextSchema = await bridge.schema(database, table)
-      schemaCache.current.set(key, nextSchema)
+      const nextSchema = await resolveSchema(table)
       if (requestId === schemaRequest.current) { setSchema(nextSchema); toast(`已载入 ${nextSchema.fields.length} 个字段、${nextSchema.tags.length} 个 Tag`) }
     } catch (error) {
       if (requestId === schemaRequest.current) toast(error instanceof Error ? `字段加载失败：${error.message}` : '字段加载失败')
@@ -234,8 +246,8 @@ export default function App() {
     </aside>
     <button className={`sidebar-resizer ${sidebarDragging?'dragging':''}`} type="button" role="separator" aria-label="调整数据目录宽度" aria-orientation="vertical" aria-valuemin={MIN_SIDEBAR_WIDTH} aria-valuemax={MAX_SIDEBAR_WIDTH} aria-valuenow={sidebarWidth} onPointerDown={beginSidebarResize} onDoubleClick={()=>resizeSidebarBy(DEFAULT_SIDEBAR_WIDTH)} onKeyDown={event=>{if(event.key==='ArrowLeft'){event.preventDefault();resizeSidebarBy(sidebarWidth-16)}if(event.key==='ArrowRight'){event.preventDefault();resizeSidebarBy(sidebarWidth+16)}if(event.key==='Home'){event.preventDefault();resizeSidebarBy(MIN_SIDEBAR_WIDTH)}if(event.key==='End'){event.preventDefault();resizeSidebarBy(MAX_SIDEBAR_WIDTH)}}} title="拖动调整宽度，双击恢复默认"/>
 
-    <main><section className="editor"><div className="editor-head"><div><h1>查询窗口</h1><span className="context">{database} / {selectedTable || '未选表'}</span>{selectedTable&&<button className="schema-refresh" disabled={schemaLoading} onClick={()=>void loadSchema(selectedTable,true)} title="刷新当前 Measurement 的 Field 和 Tag">{schemaLoading?'… Schema':'↻ Schema'}</button>}</div><div className="actions"><button className="claude wide-query-action" onClick={() => void askClaude()}>✦ 诊断查询</button><button className="wide-query-action" onClick={saveFavorite}>☆ 收藏语句</button><details className="action-menu query-more"><summary>更多 ⋯</summary><div><button onClick={() => void askClaude()}>✦ 诊断查询</button><button onClick={saveFavorite}>☆ 收藏语句</button></div></details><button className={running ? 'danger' : 'primary'} onClick={running ? cancelQuery : () => void runQuery()}>{running ? '■ 取消查询' : '▶ 执行命令'}</button></div></div><div className="query-tabs" role="tablist">{queryTabs.map(tab=><div key={tab.id} role="tab" tabIndex={0} aria-selected={tab.id===activeQueryTab.id} className={`query-tab ${tab.id===activeQueryTab.id?'active':''}`} onClick={()=>selectQueryTab(tab.id)} onKeyDown={event=>{if(event.key==='Enter'||event.key===' ')selectQueryTab(tab.id)}} onDoubleClick={()=>renameQueryTab(tab.id)} title="双击重命名"><span>{tab.name}</span><button className="close-tab" onClick={event=>{event.stopPropagation();closeQueryTab(tab.id)}} aria-label={`关闭 ${tab.name}`}>×</button></div>)}<button className="add-query-tab" onClick={addQueryTab} title="新建查询">＋</button></div><Suspense fallback={<div className="editor-loading">正在加载 InfluxQL 编辑器…</div>}><QueryEditor tabId={activeQueryTab.id} value={sql} measurements={tables} schema={schema} theme={resolvedTheme} onChange={setSql} onRun={command=>void runQuery(command)}/></Suspense></section>
-      <section className="results"><div className="result-tabs"><div>{(['result','chart','history','messages','favorites'] as ResultView[]).map(item => <button key={item} className={view === item ? 'active' : ''} onClick={() => setView(item)}>{({result:'执行结果',chart:'图表',history:`执行记录 ${history.length}`,messages:'交互消息',favorites:`收藏 ${favorites.length}`})[item]}</button>)}</div>{view === 'result' && <div className="result-actions"><button onClick={() => void copyResults()}>复制</button><button className="wide-export-action" onClick={exportCsv}>CSV</button><button className="wide-export-action" onClick={exportExcel}>Excel</button><button className="wide-export-action" onClick={exportJson}>JSON</button><details className="action-menu export-menu"><summary>导出 ▾</summary><div><button onClick={exportCsv}>导出 CSV</button><button onClick={exportExcel}>导出 Excel</button><button onClick={exportJson}>导出 JSON</button></div></details></div>}</div><div className="result-body"><ResultContent view={view} rows={rows} history={history} favorites={favorites} onUseSql={value => { setSql(value); setView('result') }} onRemoveFavorite={id => { const next = favorites.filter(f => f.id !== id); setFavorites(next); save('gdb.favorites', next) }}/></div><div className="statusbar"><b className={resultStatus === 'ERROR' ? 'danger' : ''}>{resultStatus}</b><span>{resultMeta}</span></div></section>
+    <main><section className="editor"><div className="editor-head"><div><h1>查询窗口</h1><span className="context">{database} / {selectedTable || '未选表'}</span>{selectedTable&&<button className="schema-refresh" disabled={schemaLoading} onClick={()=>void loadSchema(selectedTable,true)} title="刷新当前 Measurement 的 Field 和 Tag">{schemaLoading?'… Schema':'↻ Schema'}</button>}</div><div className="actions"><button className="claude wide-query-action" onClick={() => void askClaude()}>✦ 诊断查询</button><button className="wide-query-action" onClick={saveFavorite}>☆ 收藏语句</button><details className="action-menu query-more"><summary>更多 ⋯</summary><div><button onClick={() => void askClaude()}>✦ 诊断查询</button><button onClick={saveFavorite}>☆ 收藏语句</button></div></details><button className={running ? 'danger' : 'primary'} onClick={running ? cancelQuery : () => void runQuery()}>{running ? '■ 取消查询' : '▶ 执行命令'}</button></div></div><div className="query-tabs" role="tablist">{queryTabs.map(tab=><div key={tab.id} role="tab" tabIndex={0} aria-selected={tab.id===activeQueryTab.id} className={`query-tab ${tab.id===activeQueryTab.id?'active':''}`} onClick={()=>selectQueryTab(tab.id)} onKeyDown={event=>{if(event.key==='Enter'||event.key===' ')selectQueryTab(tab.id)}} onDoubleClick={()=>renameQueryTab(tab.id)} title="双击重命名"><span>{tab.name}</span><button className="close-tab" onClick={event=>{event.stopPropagation();closeQueryTab(tab.id)}} aria-label={`关闭 ${tab.name}`}>×</button></div>)}<button className="add-query-tab" onClick={addQueryTab} title="新建查询">＋</button></div><Suspense fallback={<div className="editor-loading">正在加载 InfluxQL 编辑器…</div>}><QueryEditor key={`${activeQueryTab.id}:${database}`} tabId={activeQueryTab.id} value={sql} measurements={tables} selectedMeasurement={selectedTable} schema={schema} resolveSchema={resolveSchema} theme={resolvedTheme} onChange={setSql} onRun={command=>void runQuery(command)}/></Suspense></section>
+      <section className="results"><div className="result-tabs"><div>{(['result','chart','history','messages','favorites'] as ResultView[]).map(item => <button key={item} className={view === item ? 'active' : ''} onClick={() => setView(item)}>{({result:'执行结果',chart:'图表',history:`执行记录 ${history.length}`,messages:'交互消息',favorites:`收藏 ${favorites.length}`})[item]}</button>)}</div>{view === 'result' && <div className="result-actions"><button onClick={() => void copyResults()}>复制</button><button className="wide-export-action" onClick={exportCsv}>CSV</button><button className="wide-export-action" onClick={exportExcel}>Excel</button><button className="wide-export-action" onClick={exportJson}>JSON</button><details className="action-menu export-menu"><summary>导出 ▾</summary><div><button onClick={exportCsv}>导出 CSV</button><button onClick={exportExcel}>导出 Excel</button><button onClick={exportJson}>导出 JSON</button></div></details></div>}</div><div className="result-body"><ResultContent view={view} rows={rows} history={history} favorites={favorites} onUseSql={value => { setSql(value); setView('result') }} onRestoreSql={value=>{setSql(value);toast('已放入当前查询窗口')}} onRemoveFavorite={id => { const next = favorites.filter(f => f.id !== id); setFavorites(next); save('gdb.favorites', next) }}/></div><div className="statusbar"><b className={resultStatus === 'ERROR' ? 'danger' : ''}>{resultStatus}</b><span>{resultMeta}</span></div></section>
     </main>
 
     {connectionDialog && <ConnectionDialog connection={connectionDialog} onClose={() => setConnectionDialog(null)} onSave={connection => { const next = connections.some(c => c.id === connection.id) ? connections.map(c => c.id === connection.id ? connection : c) : [connection, ...connections]; persistConnections(next); setActiveConnection(connection.id); save('gdb.activeConnection', connection.id); setConnectionDialog(null); void connect(connection) }} onDuplicate={connection=>{const copy={...connection,id:crypto.randomUUID(),name:`${connection.name} 副本`};persistConnections([copy,...connections]);setConnectionDialog(copy)}} onDelete={connection=>{if(!window.confirm(`删除连接“${connection.name}”？`))return;const next=connections.filter(item=>item.id!==connection.id);persistConnections(next);void deleteCredential(connection.id);setConnectionDialog(null);if(activeConnection===connection.id){const nextId=next[0]?.id||'';setActiveConnection(nextId);save('gdb.activeConnection',nextId);if(next[0])void connect(next[0])}}}/>} 
@@ -264,9 +276,9 @@ function UiIcon({ name, open = false }: { name: UiIconName; open?: boolean }) {
 
 function PanelTitle({ title, count, action }: { title: string; count: number; action?:React.ReactNode }) { return <div className="panel-title"><b>{title}</b><span className="panel-title-actions">{action}<small>{count}</small></span></div> }
 
-function ResultContent({ view, rows, history, favorites, onUseSql, onRemoveFavorite }: { view: ResultView; rows: QueryRow[]; history: Execution[]; favorites: Favorite[]; onUseSql: (sql: string) => void; onRemoveFavorite: (id: string) => void }) {
+function ResultContent({ view, rows, history, favorites, onUseSql, onRestoreSql, onRemoveFavorite }: { view: ResultView; rows: QueryRow[]; history: Execution[]; favorites: Favorite[]; onUseSql: (sql: string) => void; onRestoreSql:(sql:string)=>void; onRemoveFavorite: (id: string) => void }) {
   if(view==='chart')return <div className="chart-placeholder"><div><span>⌁</span><b>图表可视化</b><p>后续将根据 time、数值 Field 和 Tag 自动生成时序图。</p><small>当前版本保留入口，不影响查询与结果导出。</small></div></div>
-  if (view === 'history') return history.length ? <table><thead><tr><th>执行时间</th><th>命令语句</th><th>耗时</th><th>执行结果</th></tr></thead><tbody>{history.map(item => <tr key={item.id} onClick={() => onUseSql(item.sql)}><td>{formatTime(item.executedAt)}</td><td>{item.sql.replace(/\s+/g, ' ')}</td><td>{item.durationMs} ms</td><td className={item.status === 'success' ? 'success' : 'danger'}>{item.status === 'success' ? '成功' : item.status === 'cancelled' ? '已取消' : '失败'} · {item.result}</td></tr>)}</tbody></table> : <Empty text="还没有执行记录"/>
+  if (view === 'history') return history.length ? <div className="history-panel"><div className="history-hint"><span>执行记录仅供查看，单击不会跳转</span><b>双击命令语句，放入当前查询窗口</b></div><table className="history-table"><thead><tr><th>执行时间</th><th>命令语句</th><th>耗时</th><th>执行结果</th></tr></thead><tbody>{history.map(item => <tr key={item.id}><td>{formatTime(item.executedAt)}</td><td className="history-sql" title="双击放入当前查询窗口" onDoubleClick={()=>onRestoreSql(item.sql)}><code>{item.sql.replace(/\s+/g, ' ')}</code></td><td>{item.durationMs} ms</td><td className={`history-result ${item.status === 'success' ? 'success' : 'danger'}`}>{item.status === 'success' ? '成功' : item.status === 'cancelled' ? '已取消' : '失败'} · {item.result}</td></tr>)}</tbody></table></div> : <Empty text="还没有执行记录"/>
   if (view === 'messages') return history.length ? <div className="messages">{history.map(item => <pre key={item.id}>{`--------开始执行--------\n【执行命令】\n${item.sql}\n执行命令${item.status === 'success' ? '成功' : item.status === 'cancelled' ? '已取消' : '失败'}，耗时：[${item.durationMs}ms]！`}</pre>)}</div> : <Empty text="还没有交互消息"/>
   if (view === 'favorites') return favorites.length ? <div className="favorite-list">{favorites.map(item => <div className="favorite" key={item.id} onClick={() => onUseSql(item.sql)}><span><b>★ {item.name}</b><code>{item.sql.replace(/\s+/g, ' ')}</code></span><button onClick={e => { e.stopPropagation(); onRemoveFavorite(item.id) }}>×</button></div>)}</div> : <Empty text="还没有收藏语句"/>
   if (!rows.length) return <Empty text="执行命令后在这里查看结果" sub="查询返回数据表，写入返回影响行数"/>

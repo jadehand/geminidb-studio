@@ -98,6 +98,8 @@
   border-top:1px solid #2d3743;
 }
 :root[data-theme="dark"] .monaco-foot .schema-ready{color:#72c7aa}
+:root[data-theme="dark"] .monaco-foot .schema-loading{color:#8fbdff}
+:root[data-theme="dark"] .monaco-foot .schema-error{color:#f0aaa4}
 :root[data-theme="dark"] .monaco-foot .schema-empty{color:#8996a6}
 :root[data-theme="dark"] .monaco-foot kbd{
   color:#c4cfdb;

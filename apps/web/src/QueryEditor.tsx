@@ -2,31 +2,20 @@ import Editor, { loader, type Monaco, type OnMount } from '@monaco-editor/react'
 import type { editor as MonacoEditor, Position } from 'monaco-editor'
 import * as monacoApi from 'monaco-editor/esm/vs/editor/editor.api'
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
-import { useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import 'monaco-editor/esm/vs/basic-languages/sql/sql.contribution'
 import type { MeasurementSchema } from './types'
 import { findTimeHover } from './influxql-time-hover'
+import { completionContext, measurementFromQuery, shouldAutoSuggest } from './influxql-completion'
 
 self.MonacoEnvironment = { getWorker: () => new EditorWorker() }
 loader.config({ monaco: monacoApi })
 
 let languageFeaturesReady = false
-let currentMeasurements: string[] = []
-let currentSchema: MeasurementSchema = { fields: [], tags: [] }
+const modelContexts = new Map<string, { measurements: string[]; schema: MeasurementSchema }>()
 
 const KEYWORDS = ['SELECT','FROM','WHERE','GROUP BY','ORDER BY','LIMIT','SLIMIT','OFFSET','SHOW DATABASES','SHOW MEASUREMENTS','SHOW FIELD KEYS','SHOW TAG KEYS','SHOW TAG VALUES','EXPLAIN','WRITE']
-const FUNCTIONS = ['now()','mean()','sum()','count()','max()','min()','first()','last()','percentile()','derivative()','difference()','fill()']
-
-function activeClause(value: string) {
-  const statement = value.split(';').at(-1) || ''
-  const matches = [...statement.matchAll(/\b(GROUP\s+BY|ORDER\s+BY|SELECT|FROM|WHERE|LIMIT|SLIMIT|OFFSET)\b/gi)]
-  return matches.at(-1)?.[1].toUpperCase().replace(/\s+/g, ' ') || ''
-}
-
-function shouldTriggerSuggestions(value: string) {
-  const statement = value.split(';').at(-1) || ''
-  return /\b(?:SELECT|FROM|WHERE|GROUP\s+BY|ORDER\s+BY)\s+(?:"[^"]*)?$/i.test(statement)
-}
+const FUNCTIONS = ['mean','sum','count','max','min','first','last','percentile','derivative','difference']
 
 function registerInfluxQL(monaco: Monaco) {
   if (languageFeaturesReady) return
@@ -37,23 +26,30 @@ function registerInfluxQL(monaco: Monaco) {
       const word = model.getWordUntilPosition(position)
       const range = { startLineNumber: position.lineNumber, endLineNumber: position.lineNumber, startColumn: word.startColumn, endColumn: word.endColumn }
       const beforeCursor = model.getValueInRange({ startLineNumber:1, startColumn:1, endLineNumber:position.lineNumber, endColumn:position.column })
-      const clause = activeClause(beforeCursor)
+      const context = completionContext(beforeCursor)
+      const { measurements, schema } = modelContexts.get(model.uri.toString()) || { measurements:[], schema:{fields:[],tags:[]} }
       const line = model.getLineContent(position.lineNumber)
       const insideQuote = line[word.startColumn - 2] === '"'
       const quoted = (label: string) => insideQuote ? label : `"${label}"`
-      const keywords = KEYWORDS.map(label => ({ label, kind: monaco.languages.CompletionItemKind.Keyword, insertText: label, range }))
-      const functions = FUNCTIONS.map(label => ({ label, kind: monaco.languages.CompletionItemKind.Function, insertText: label, range }))
-      const measurements = currentMeasurements.map(label => ({ label, detail: 'measurement', kind: monaco.languages.CompletionItemKind.Reference, insertText: quoted(label), range, sortText:`0${label}` }))
-      const fields = currentSchema.fields.map(field => ({ label:field.name, detail:`field · ${field.type}`, kind:monaco.languages.CompletionItemKind.Field, insertText:quoted(field.name), range, sortText:`0${field.name}` }))
-      const tags = currentSchema.tags.map(label => ({ label, detail:'tag', kind:monaco.languages.CompletionItemKind.Property, insertText:quoted(label), range, sortText:`1${label}` }))
+      const snippetRule = monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
+      const keywords = KEYWORDS.map(label => ({ label, detail:'InfluxQL 关键词', kind:monaco.languages.CompletionItemKind.Keyword, insertText:label, range, sortText:`5${label}` }))
+      const functions = FUNCTIONS.map(label => ({ label:`${label}()`, filterText:label, detail:'InfluxQL 函数', kind:monaco.languages.CompletionItemKind.Function, insertText:`${label}(\${1:"field"})`, insertTextRules:snippetRule, range, sortText:`2${label}` }))
+      const measurementItems = measurements.map(label => ({ label, detail:'Measurement', kind:monaco.languages.CompletionItemKind.Reference, insertText:quoted(label), range, sortText:`0${label}` }))
+      const fields = schema.fields.map(field => ({ label:field.name, detail:`Field · ${field.type}`, kind:monaco.languages.CompletionItemKind.Field, insertText:quoted(field.name), range, sortText:`0${field.name}` }))
+      const tags = schema.tags.map(label => ({ label, detail:'Tag Key', kind:monaco.languages.CompletionItemKind.Property, insertText:quoted(label), range, sortText:`1${label}` }))
       const allSchema = [...fields, ...tags]
-      const contextual = clause === 'FROM' ? measurements
-        : clause === 'SELECT' ? [...fields, ...functions]
-        : clause === 'WHERE' ? [...allSchema, ...functions]
-        : clause === 'GROUP BY' ? [...tags, { label:'time()', detail:'时间窗口', kind:monaco.languages.CompletionItemKind.Function, insertText:'time()', range }]
-        : clause === 'ORDER BY' ? [{ label:'time', detail:'InfluxQL 时间列', kind:monaco.languages.CompletionItemKind.Field, insertText:'time', range }]
-        : [...measurements, ...allSchema, ...functions]
-      return { suggestions: [...contextual, ...keywords] }
+      const operators = ['=','!=','=~','!~','>','>=','<','<='].map(label => ({ label, detail:'条件运算符', kind:monaco.languages.CompletionItemKind.Operator, insertText:label, range, sortText:`0${label}` }))
+      const contextual = context.clause === 'FROM' ? measurementItems
+        : context.clause === 'SELECT' ? [...fields, ...functions, { label:'*', detail:'全部 Field', kind:monaco.languages.CompletionItemKind.Field, insertText:'*', range, sortText:'0*' }]
+        : context.clause === 'WHERE' ? [...allSchema, ...operators, { label:'time', detail:'InfluxQL 时间列', kind:monaco.languages.CompletionItemKind.Field, insertText:'time', range, sortText:'0time' }, { label:'now()', detail:'当前时间', kind:monaco.languages.CompletionItemKind.Function, insertText:'now()', range, sortText:'2now' }]
+        : context.clause === 'GROUP BY' ? [...tags, { label:'time()', detail:'时间窗口', kind:monaco.languages.CompletionItemKind.Function, insertText:'time(${1:1m})', insertTextRules:snippetRule, range, sortText:'0time' }, { label:'fill()', detail:'空值填充', kind:monaco.languages.CompletionItemKind.Function, insertText:'fill(${1:null})', insertTextRules:snippetRule, range, sortText:'1fill' }]
+        : context.clause === 'ORDER BY' ? [{ label:'time DESC', detail:'时间倒序', kind:monaco.languages.CompletionItemKind.Snippet, insertText:'time DESC', range, sortText:'0' }, { label:'time ASC', detail:'时间正序', kind:monaco.languages.CompletionItemKind.Snippet, insertText:'time ASC', range, sortText:'1' }]
+        : [...measurementItems, ...allSchema, ...functions]
+      const templates = [
+        { label:'SELECT 查询模板', filterText:'SELECT', detail:'带时间范围和 LIMIT', kind:monaco.languages.CompletionItemKind.Snippet, insertText:'SELECT ${1:*}\\nFROM "${2:measurement}"\\nWHERE time >= now() - ${3:1h}\\nORDER BY time DESC\\nLIMIT ${4:100}', insertTextRules:snippetRule, range, sortText:'8SELECT' },
+        { label:'WRITE 写入模板', filterText:'WRITE', detail:'GeminiDB Line Protocol', kind:monaco.languages.CompletionItemKind.Snippet, insertText:'WRITE ${1:measurement},${2:tag_key}=${3:tag_value} ${4:field_key}=${5:field_value} ${6:timestamp}', insertTextRules:snippetRule, range, sortText:'8WRITE' },
+      ]
+      return { suggestions: [...contextual, ...keywords, ...templates] }
     }
   })
   monaco.languages.registerHoverProvider('sql', {
@@ -114,12 +110,26 @@ function validate(monaco: Monaco, model: MonacoEditor.ITextModel) {
   monaco.editor.setModelMarkers(model, 'influxql', markers)
 }
 
-type Props = { tabId: string; value: string; measurements: string[]; schema: MeasurementSchema; theme:'light'|'dark'; onChange: (value: string) => void; onRun: (sql: string) => void }
+type Props = { tabId: string; value: string; measurements: string[]; selectedMeasurement:string; schema: MeasurementSchema; theme:'light'|'dark'; resolveSchema:(measurement:string)=>Promise<MeasurementSchema>; onChange: (value: string) => void; onRun: (sql: string) => void }
 
-export default function QueryEditor({ tabId, value, measurements, schema, theme, onChange, onRun }: Props) {
-  currentMeasurements = measurements
-  currentSchema = schema
+export default function QueryEditor({ tabId, value, measurements, selectedMeasurement, schema, theme, resolveSchema, onChange, onRun }: Props) {
+  const sqlMeasurement=measurementFromQuery(value)
+  const activeMeasurement=sqlMeasurement||selectedMeasurement
+  const [completionSchema,setCompletionSchema]=useState(schema)
+  const [schemaState,setSchemaState]=useState<'empty'|'loading'|'ready'|'error'>(()=>schema.fields.length||schema.tags.length?'ready':'empty')
   const editorRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null)
+  const suggestTimer = useRef<number | null>(null)
+  const modelUri=`influxql:///${tabId}.sql`
+  modelContexts.set(monacoApi.Uri.parse(modelUri).toString(),{measurements,schema:completionSchema})
+  useEffect(()=>{
+    let active=true
+    if(!activeMeasurement){setCompletionSchema({fields:[],tags:[]});setSchemaState('empty');return()=>{active=false}}
+    if(activeMeasurement===selectedMeasurement&&(schema.fields.length||schema.tags.length)){setCompletionSchema(schema);setSchemaState('ready');return()=>{active=false}}
+    setSchemaState('loading')
+    void resolveSchema(activeMeasurement).then(next=>{if(active){setCompletionSchema(next);setSchemaState('ready')}}).catch(()=>{if(active){setCompletionSchema({fields:[],tags:[]});setSchemaState('error')}})
+    return()=>{active=false}
+  },[activeMeasurement,resolveSchema,schema,selectedMeasurement])
+  useEffect(()=>()=>{modelContexts.delete(monacoApi.Uri.parse(modelUri).toString());if(suggestTimer.current)window.clearTimeout(suggestTimer.current)},[modelUri])
   const openSuggestions = (editor = editorRef.current) => {
     if (!editor) return
     editor.focus()
@@ -135,17 +145,16 @@ export default function QueryEditor({ tabId, value, measurements, schema, theme,
       if (!activeModel) return
       validate(monaco, activeModel)
       const position = editor.getPosition()
-      const typedTrigger = event.changes.some(change => change.text.endsWith(' ') || change.text.endsWith('"'))
-      if (!position || !typedTrigger) return
+      if (!position) return
       const beforeCursor = activeModel.getValueInRange({
         startLineNumber:1,
         startColumn:1,
         endLineNumber:position.lineNumber,
         endColumn:position.column,
       })
-      if (shouldTriggerSuggestions(beforeCursor)) {
-        openSuggestions(editor)
-      }
+      if (!event.changes.some(change=>shouldAutoSuggest(beforeCursor,change.text))) return
+      if(suggestTimer.current)window.clearTimeout(suggestTimer.current)
+      suggestTimer.current=window.setTimeout(()=>openSuggestions(editor),80)
     })
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Space, () => {
       openSuggestions(editor)
@@ -157,6 +166,6 @@ export default function QueryEditor({ tabId, value, measurements, schema, theme,
       onRun(selected || activeModel?.getValue() || '')
     })
   }
-  const schemaReady = schema.fields.length > 0 || schema.tags.length > 0
-  return <div className="monaco-shell"><Editor path={`influxql:///${tabId}.sql`} language="sql" theme={theme==='dark'?'geminidb-dark':'geminidb-light'} value={value} beforeMount={registerInfluxQL} onMount={handleMount} onChange={next => onChange(next || '')} options={{ automaticLayout:true, minimap:{enabled:false}, fontFamily:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize:12, lineHeight:22, lineNumbers:'on', lineNumbersMinChars:3, lineDecorationsWidth:8, padding:{top:10,bottom:30}, scrollBeyondLastLine:false, wordWrap:'off', tabSize:2, suggest:{showWords:false}, quickSuggestions:{other:true,comments:false,strings:true}, suggestOnTriggerCharacters:true, acceptSuggestionOnEnter:'on', fixedOverflowWidgets:true, renderValidationDecorations:'on' }}/><div className="monaco-foot"><span className={schemaReady?'schema-ready':'schema-empty'}>{schemaReady?`Schema 已就绪 · ${schema.fields.length} 字段 · ${schema.tags.length} 标签`:'尚未选择 Measurement'}</span><span className="completion-help"><button type="button" onMouseDown={event=>{event.preventDefault();openSuggestions()}}>显示补全</button><kbd>Ctrl</kbd> + <kbd>Space</kbd><i>·</i><kbd>Ctrl/Cmd</kbd> + <kbd>Enter</kbd> 执行</span></div></div>
+  const schemaLabel=schemaState==='loading'?`正在读取 ${activeMeasurement} Schema…`:schemaState==='error'?`${activeMeasurement} Schema 加载失败`:schemaState==='ready'?`${activeMeasurement} · ${completionSchema.fields.length} Field · ${completionSchema.tags.length} Tag`:'输入 FROM 或选择 Measurement 后加载 Schema'
+  return <div className="monaco-shell"><Editor path={modelUri} language="sql" theme={theme==='dark'?'geminidb-dark':'geminidb-light'} value={value} beforeMount={registerInfluxQL} onMount={handleMount} onChange={next => onChange(next || '')} options={{ automaticLayout:true, minimap:{enabled:false}, fontFamily:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize:12, lineHeight:22, lineNumbers:'on', lineNumbersMinChars:3, lineDecorationsWidth:8, padding:{top:10,bottom:30}, scrollBeyondLastLine:false, wordWrap:'off', tabSize:2, suggest:{showWords:false,filterGraceful:true,showStatusBar:true,preview:true}, quickSuggestions:{other:true,comments:false,strings:true}, quickSuggestionsDelay:80, suggestOnTriggerCharacters:true, acceptSuggestionOnEnter:'on', snippetSuggestions:'inline', fixedOverflowWidgets:true, renderValidationDecorations:'on' }}/><div className="monaco-foot"><span className={`schema-${schemaState}`}>{schemaLabel}</span><span className="completion-help"><button type="button" onMouseDown={event=>{event.preventDefault();openSuggestions()}}>显示补全</button><kbd>Ctrl</kbd> + <kbd>Space</kbd><i>·</i><kbd>Ctrl/Cmd</kbd> + <kbd>Enter</kbd> 执行</span></div></div>
 }

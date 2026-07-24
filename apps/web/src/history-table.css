@@ -1,0 +1,18 @@
+.history-panel{min-width:0;min-height:100%;background:#fff}
+.history-hint{position:sticky;left:0;top:0;z-index:3;display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:34px;padding:0 12px;color:#7b8795;background:#f7f9fb;border-bottom:1px solid #e2e7ed;font-size:9px}
+.history-hint b{color:#3567a8;font-weight:620}
+.history-table{min-width:900px}
+.history-table tbody tr{cursor:default}
+.history-table tbody tr:hover td{background:#fafbfd}
+.history-table td{user-select:text}
+.history-table .history-sql{cursor:copy}
+.history-table .history-sql code{display:block;max-width:760px;overflow:hidden;color:#354150;font:10px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;text-overflow:ellipsis;white-space:nowrap;user-select:text}
+.history-table .history-sql:hover{background:#f1f6fd}
+.history-table .history-result{max-width:520px;overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;line-height:1.5}
+:root[data-theme="dark"] .history-panel{background:#171d25}
+:root[data-theme="dark"] .history-hint{color:#8f9bab;background:#1d252f;border-color:#36404c}
+:root[data-theme="dark"] .history-hint b{color:#8fbdff}
+:root[data-theme="dark"] .history-table tbody tr:hover td{background:#202a35}
+:root[data-theme="dark"] .history-table .history-sql code{color:#d2dae4}
+:root[data-theme="dark"] .history-table .history-sql:hover{background:#263442}
+@media(max-width:760px){.history-hint{align-items:flex-start;flex-direction:column;gap:2px;padding-block:7px}}

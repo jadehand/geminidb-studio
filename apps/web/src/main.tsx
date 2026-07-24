@@ -13,6 +13,7 @@ import './sidebar-resize.css'
 import './time-dialog.css'
 import './connection-dialog.css'
 import './favorite-dialog.css'
+import './history-table.css'
 import './responsive-layout.css'
 import './theme.css'
 
