@@ -151,10 +151,39 @@ fn delete_credential(id: String) -> Result<(), String> {
     }
 }
 
+#[tauri::command]
+fn export_result_file(
+    app: tauri::AppHandle,
+    directory: String,
+    filename: String,
+    content: String,
+) -> Result<String, String> {
+    let name = std::path::Path::new(&filename);
+    if name.file_name().and_then(|value| value.to_str()) != Some(filename.as_str()) {
+        return Err("导出文件名无效".into());
+    }
+    let extension = name.extension().and_then(|value| value.to_str()).unwrap_or_default();
+    if !matches!(extension, "csv" | "xls" | "json") {
+        return Err("仅支持导出 CSV、Excel 或 JSON".into());
+    }
+    let folder = if directory.trim().is_empty() {
+        app.path().download_dir().map_err(|error| format!("无法读取系统下载目录：{error}"))?
+    } else {
+        std::path::PathBuf::from(directory)
+    };
+    if !folder.is_dir() {
+        return Err("导出目录不存在或不可访问".into());
+    }
+    let path = folder.join(name);
+    std::fs::write(&path, content).map_err(|error| format!("写入导出文件失败：{error}"))?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
         .manage(BridgeProcess::default())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             if let Err(error) = start_bridge(app.handle()) {
@@ -166,6 +195,7 @@ pub fn run() {
             save_credential,
             load_credential,
             delete_credential,
+            export_result_file,
             bridge_status,
             restart_bridge
         ])

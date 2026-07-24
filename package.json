@@ -1,12 +1,13 @@
 {
   "name": "geminidb-studio",
   "private": true,
-  "version": "0.4.2",
+  "version": "0.4.3",
   "workspaces": [
     "apps/web"
   ],
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.2",
     "monaco-editor": "0.53.0"
   },
   "scripts": {
