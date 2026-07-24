@@ -5,7 +5,7 @@ export const NEW_INFLUX_CONNECTION: Connection = {
   name: '',
   mode: 'influx',
   environment: 'dev',
-  endpoint: 'http://',
+  endpoint: '',
   username: '',
   password: '',
   autoLogin: false,

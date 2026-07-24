@@ -6,7 +6,7 @@ export type TourStep = {
   description: string
 }
 
-export const TOUR_STORAGE_KEY = 'gdb.onboarding.v1.status'
+export const TOUR_STORAGE_KEY = 'gdb.onboarding.v2.status'
 
 export const TOUR_STEPS: TourStep[] = [
   {
@@ -51,7 +51,7 @@ export const TOUR_STEPS: TourStep[] = [
   }
 ]
 
-export function initialTourStatus(saved: unknown, databaseHintSeen: boolean): TourStatus {
+export function initialTourStatus(saved: unknown): TourStatus {
   if (saved === 'completed' || saved === 'skipped') return saved
-  return databaseHintSeen ? 'completed' : 'new'
+  return 'new'
 }

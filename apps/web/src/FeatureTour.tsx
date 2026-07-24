@@ -41,9 +41,14 @@ export default function FeatureTour({ steps, onComplete, onSkip }: Props) {
   useLayoutEffect(() => {
     const update = () => setBox(targetBox(step.target))
     update()
+    const observer = new MutationObserver(update)
+    observer.observe(document.body, { childList: true, subtree: true })
+    const frame = window.requestAnimationFrame(update)
     window.addEventListener('resize', update)
     window.addEventListener('scroll', update, true)
     return () => {
+      observer.disconnect()
+      window.cancelAnimationFrame(frame)
       window.removeEventListener('resize', update)
       window.removeEventListener('scroll', update, true)
     }

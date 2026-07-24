@@ -27,10 +27,12 @@ test('导览可跳过、完成、前后导航并显示进度',()=>{
 
 test('打开导览时保证新建连接入口可见',()=>{
   assert.match(app,/if\(tourOpen\)\{setSideTool\('connections'\);setSideOpen\(true\)\}/)
+  assert.match(component,/new MutationObserver\(update\)/)
+  assert.match(component,/requestAnimationFrame\(update\)/)
 })
 
-test('现有用户不会被强制重复引导，并提供重新查看入口',()=>{
-  assert.match(model,/return databaseHintSeen \? 'completed' : 'new'/)
+test('新版首次进入展示一次引导，完成后不重复，并提供重新查看入口',()=>{
+  assert.match(model,/return 'new'/)
   assert.match(app,/title="重新查看功能导览"/)
-  assert.match(model,/gdb\.onboarding\.v1\.status/)
+  assert.match(model,/gdb\.onboarding\.v2\.status/)
 })

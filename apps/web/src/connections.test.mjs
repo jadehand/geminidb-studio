@@ -5,6 +5,7 @@ import { NEW_INFLUX_CONNECTION, removeMockConnections } from './connections.ts'
 test('首次启动不再创建 Mock 或预填用户名', () => {
   assert.equal(NEW_INFLUX_CONNECTION.mode, 'influx')
   assert.equal(NEW_INFLUX_CONNECTION.username, '')
+  assert.equal(NEW_INFLUX_CONNECTION.endpoint, '')
   assert.equal(NEW_INFLUX_CONNECTION.autoLogin, false)
 })
 
