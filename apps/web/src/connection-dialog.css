@@ -25,15 +25,25 @@
 .connection-option small{margin-top:2px;color:#8994a1;font-size:9px;font-weight:400;line-height:1.4}
 .warning-option small{color:#9a7350}
 .connection-dialog-actions{min-height:58px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 22px 13px;border-top:1px solid #e8ecf1}
-.connection-test,.connection-primary-actions{display:flex;align-items:center;gap:7px}
-.connection-test{min-width:0}
-.connection-test span{max-width:180px;overflow:hidden;font-size:9px;text-overflow:ellipsis;white-space:nowrap}
+.connection-primary-actions{display:flex;align-items:center;gap:7px}
+.connection-test-result{display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:start;gap:9px;margin:0 22px 14px;padding:10px 11px;border:1px solid;border-radius:8px}
+.connection-test-result.is-success{color:#176b47;background:#f1faf6;border-color:#bde5d1}
+.connection-test-result.is-error{color:#9f2d2d;background:#fff6f5;border-color:#f1c3bf}
+.connection-test-result-mark{display:grid;width:20px;height:20px;place-items:center;margin-top:1px;color:#fff;font-size:11px;font-weight:700;line-height:1;border-radius:50%;background:#2b9668}
+.connection-test-result.is-error .connection-test-result-mark{background:#d34d43}
+.connection-test-result-copy{min-width:0}
+.connection-test-result-copy strong{display:block;font-size:11px;line-height:1.45}
+.connection-test-result-copy p{margin:2px 0 0;color:inherit;font-family:inherit;font-size:10px;line-height:1.55;overflow-wrap:anywhere;white-space:pre-wrap;user-select:text}
+.connection-test-result button{min-height:26px;padding:0 8px;color:inherit;font-size:9px;background:transparent;border-color:currentColor;opacity:.8}
+.connection-test-result button:hover{opacity:1}
 .connection-primary-actions{justify-content:flex-end}
 .connection-dialog-actions button{height:32px;padding:0 10px}
 @media(max-width:620px){
   .connection-form-row,.connection-form-row.protocol-row{grid-template-columns:1fr}
   .connection-dialog{max-height:94vh;overflow:auto}
   .connection-dialog-actions{align-items:stretch;flex-direction:column}
+  .connection-test-result{grid-template-columns:20px minmax(0,1fr)}
+  .connection-test-result button{grid-column:2;justify-self:start}
   .connection-primary-actions{flex-wrap:wrap}
 }
 :root[data-theme="dark"] .connection-dialog{color:#d9e1ea;background:#1d252f}
@@ -51,3 +61,5 @@
 :root[data-theme="dark"] .connection-option small{color:#8f9bab}
 :root[data-theme="dark"] .warning-option small{color:#d2a77d}
 :root[data-theme="dark"] .connection-dialog-actions{border-color:#394350}
+:root[data-theme="dark"] .connection-test-result.is-success{color:#8ed8b6;background:#172d26;border-color:#2e5a49}
+:root[data-theme="dark"] .connection-test-result.is-error{color:#f0aaa4;background:#35201f;border-color:#6f3a36}

@@ -302,9 +302,10 @@ function ConnectionDialog({ connection, onClose, onSave, onDuplicate, onDelete }
   const [draft, setDraft] = useState(connection)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState('')
+  const [testResultCopied, setTestResultCopied] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const testConnection = async () => {
-    setTesting(true); setTestResult('')
+    setTesting(true); setTestResult(''); setTestResultCopied(false)
     try {
       const savedPassword = draft.id ? await loadCredential(draft.id) : null
       await bridge.login({...connectionForTransport(draft), password:draft.password || savedPassword || ''})
@@ -313,6 +314,14 @@ function ConnectionDialog({ connection, onClose, onSave, onDuplicate, onDelete }
     } catch (error) { setTestResult(error instanceof Error ? `连接失败：${error.message}` : '连接失败') }
     finally { setTesting(false) }
   }
+  const copyTestResult = async () => {
+    if (!testResult) return
+    await navigator.clipboard.writeText(testResult)
+    setTestResultCopied(true)
+    window.setTimeout(() => setTestResultCopied(false), 1600)
+  }
+  const testSucceeded=testResult.startsWith('连接成功')
+  const testResultDetail=testResult.replace(/^连接成功\s*·?\s*/,'').replace(/^连接失败[：:]?\s*/,'')
   const protocol=endpointProtocol(draft.endpoint)
   return <div className="modal"><div className="dialog connection-dialog" role="dialog" aria-modal="true" aria-labelledby="connection-dialog-title">
     <div className="connection-dialog-head"><h2 id="connection-dialog-title">GeminiDB Influx 连接</h2><p>连接信息仅保存在本机，密码由系统凭据库安全保存。</p></div>
@@ -322,7 +331,8 @@ function ConnectionDialog({ connection, onClose, onSave, onDuplicate, onDelete }
       <div className="connection-form-row"><label>用户名<input value={draft.username} onChange={e => setDraft({...draft, username:e.target.value})} placeholder="请输入实例用户名"/></label><label>密码<div className="password-field"><input type={showPassword?'text':'password'} value={draft.password || ''} onChange={e => setDraft({...draft, password:e.target.value})} autoComplete="current-password"/><button type="button" onClick={()=>setShowPassword(current=>!current)} aria-label={showPassword?'隐藏密码':'显示密码'}>{showPassword?'隐藏':'显示'}</button></div></label></div>
       <fieldset className="connection-options"><legend>连接选项</legend><label className="connection-option"><input type="checkbox" checked={draft.autoLogin} onChange={e => setDraft({...draft, autoLogin:e.target.checked})}/><span><b>启动时自动连接</b><small>打开客户端后自动连接此实例</small></span></label><label className="connection-option"><input type="checkbox" checked={draft.readOnly} onChange={e => setDraft({...draft, readOnly:e.target.checked})}/><span><b>只读模式</b><small>禁止写入；当前客户端仅允许查询类命令</small></span></label>{protocol === 'https' && <label className="connection-option warning-option"><input type="checkbox" checked={draft.insecureSkipVerify} onChange={e => setDraft({...draft, insecureSkipVerify:e.target.checked})}/><span><b>忽略 TLS 证书校验</b><small>仅用于可信网络中的自签名证书</small></span></label>}</fieldset>
     </div>
-    <div className="connection-dialog-actions"><div className="connection-test"><button disabled={testing} onClick={()=>void testConnection()}>{testing?'正在测试…':'测试连接'}</button>{testResult&&<span className={testResult.startsWith('连接成功')?'success':'danger'}>{testResult}</span>}</div><div className="connection-primary-actions">{draft.id&&<><button onClick={()=>onDuplicate(draft)}>复制</button><button className="danger" onClick={()=>onDelete(draft)}>删除</button></>}<button onClick={onClose}>取消</button><button className="primary" onClick={() => onSave({...connectionForTransport(draft), id:draft.id || crypto.randomUUID()})}>保存并连接</button></div></div>
+    {testResult&&<div className={`connection-test-result ${testSucceeded?'is-success':'is-error'}`} role={testSucceeded?'status':'alert'}><span className="connection-test-result-mark" aria-hidden="true">{testSucceeded?'✓':'!'}</span><div className="connection-test-result-copy"><strong>{testSucceeded?'连接成功':'连接失败'}</strong><p>{testResultDetail}</p></div><button type="button" onClick={()=>void copyTestResult()}>{testResultCopied?'已复制':'复制详情'}</button></div>}
+    <div className="connection-dialog-actions"><button disabled={testing} onClick={()=>void testConnection()}>{testing?'正在测试…':'测试连接'}</button><div className="connection-primary-actions">{draft.id&&<><button onClick={()=>onDuplicate(draft)}>复制</button><button className="danger" onClick={()=>onDelete(draft)}>删除</button></>}<button onClick={onClose}>取消</button><button className="primary" onClick={() => onSave({...connectionForTransport(draft), id:draft.id || crypto.randomUUID()})}>保存并连接</button></div></div>
   </div></div>
 }
 
