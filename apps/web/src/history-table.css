@@ -1,5 +1,5 @@
 .history-panel{min-width:0;min-height:100%;background:#fff}
-.history-hint{position:sticky;left:0;top:0;z-index:3;display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:34px;padding:0 12px;color:#7b8795;background:#f7f9fb;border-bottom:1px solid #e2e7ed;font-size:9px}
+.history-hint{position:sticky;left:0;top:0;z-index:3;display:flex;align-items:center;justify-content:flex-end;gap:12px;min-height:34px;padding:0 12px;color:#7b8795;background:#f7f9fb;border-bottom:1px solid #e2e7ed;font-size:9px}
 .history-hint b{color:#3567a8;font-weight:620}
 .history-table{min-width:900px}
 .history-table tbody tr{cursor:default}

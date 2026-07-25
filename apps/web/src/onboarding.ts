@@ -6,7 +6,7 @@ export type TourStep = {
   description: string
 }
 
-export const TOUR_STORAGE_KEY = 'gdb.onboarding.v2.status'
+export const TOUR_STORAGE_KEY = 'gdb.onboarding.v3.status'
 
 export const TOUR_STEPS: TourStep[] = [
   {
@@ -28,6 +28,11 @@ export const TOUR_STEPS: TourStep[] = [
     target: 'query-editor',
     title: '更快编写 InfluxQL',
     description: '输入 SELECT 等关键词会自动补全，也可按 Ctrl + Space 主动唤起。'
+  },
+  {
+    target: 'schema-summary',
+    title: '查看完整 Measurement Schema',
+    description: '选择 Measurement 后，点击编辑器底部的 Schema 摘要，可搜索、刷新并复制全部 Field 类型和 Tag。'
   },
   {
     target: 'execute-query',

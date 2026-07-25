@@ -13,5 +13,6 @@ test('执行记录整行没有单击跳转行为',()=>{
 test('只有双击命令语句才恢复到当前查询窗口',()=>{
   assert.match(source,/className=\"history-sql\"[^>]+onDoubleClick=\{\(\)=>onRestoreSql\(item\.sql\)\}/)
   assert.match(source,/双击命令语句，放入当前查询窗口/)
+  assert.doesNotMatch(source,/执行记录仅供查看，单击不会跳转/)
   assert.match(source,/onRestoreSql=\{value=>\{setSql\(value\);toast\('已放入当前查询窗口'\)\}\}/)
 })
