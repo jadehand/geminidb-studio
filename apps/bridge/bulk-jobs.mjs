@@ -10,8 +10,10 @@ function jobError(message, code) {
 }
 
 function isRetryable(error) {
-  if (error?.retryable === true) return true
-  return [429, 500, 502, 503, 504].includes(Number(error?.statusCode))
+  if (error?.statusCode !== undefined && error?.statusCode !== null) {
+    return [429, 500, 502, 503, 504].includes(Number(error.statusCode))
+  }
+  return error?.retryable === true
 }
 
 function publicError(error) {
@@ -114,7 +116,7 @@ export function createBulkJobManager({
     let nextBatchIndex = 0
 
     async function worker() {
-      while (job.status === 'running' && !job.abortController.signal.aborted) {
+      while (job.status === 'running' && !job.pauseRequested && !job.abortController.signal.aborted) {
         const current = iterator.next()
         if (current.done) return
         const batchIndex = nextBatchIndex
@@ -139,8 +141,8 @@ export function createBulkJobManager({
         } catch (error) {
           if (job.abortController.signal.aborted || error?.name === 'AbortError') return
           if (error?.bulkRetryExhausted) {
-            job.status = 'paused'
-            job.lastError = publicError(error)
+            job.pauseRequested = true
+            job.pauseError = error
             touch(job)
             return
           }
@@ -161,6 +163,14 @@ export function createBulkJobManager({
         job.currentMeasurement = target.measurement
         touch(job)
         await runDate(job, target, dateIndex)
+        if (job.pauseRequested) {
+          job.status = 'paused'
+          job.lastError = publicError(job.pauseError)
+          job.pauseRequested = false
+          job.pauseError = null
+          touch(job)
+          break
+        }
       }
       if (job.status === 'running') setTerminal(job, 'succeeded')
     } catch (error) {
@@ -210,6 +220,8 @@ export function createBulkJobManager({
       updatedAt: timestamp,
       completedBatchKeys: new Set(),
       abortController: new AbortController(),
+      pauseRequested: false,
+      pauseError: null,
       runner: null,
     }
     jobs.set(id, job)
@@ -238,6 +250,8 @@ export function createBulkJobManager({
     }
     job.status = 'running'
     job.lastError = null
+    job.pauseRequested = false
+    job.pauseError = null
     job.abortController = new AbortController()
     activeJobId = id
     touch(job)

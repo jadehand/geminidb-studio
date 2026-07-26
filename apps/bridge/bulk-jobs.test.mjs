@@ -91,6 +91,17 @@ test('retries allowed failures, pauses after the fourth failure, and resumes exa
   const failedManager = createBulkJobManager({ writeBatch: async () => { throw Object.assign(new Error('bad request'), { statusCode: 400 }) } })
   const failed = failedManager.start({ id: 'failed', connectionIdentity: 'conn-b', plan: plan(['2026-07-25'], 1), seed: 'seed' })
   assert.equal((await waitFor(failedManager, failed.id, 'failed')).lastError.code, '400')
+
+  let misleadingAttempts = 0
+  const misleadingManager = createBulkJobManager({
+    writeBatch: async () => {
+      misleadingAttempts += 1
+      throw Object.assign(new Error('bad request'), { statusCode: 400, retryable: true })
+    },
+  })
+  const misleading = misleadingManager.start({ id: 'misleading', connectionIdentity: 'conn-c', plan: plan(['2026-07-25'], 1), seed: 'seed' })
+  assert.equal((await waitFor(misleadingManager, misleading.id, 'failed')).lastError.code, '400')
+  assert.equal(misleadingAttempts, 1)
 })
 
 test('records a later in-flight success while paused and skips it on resume', async () => {
@@ -117,8 +128,10 @@ test('records a later in-flight success while paused and skips it on resume', as
     plan: plan(['2026-07-25'], 1_001),
     seed: 'seed',
   })
-  await waitFor(manager, started.id, 'paused')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(manager.get(started.id).status, 'running')
   releaseSecond()
+  await waitFor(manager, started.id, 'paused')
   await waitForSnapshot(manager, started.id, snapshot => snapshot.completedBatches === 1)
 
   manager.resume(started.id)
@@ -127,6 +140,42 @@ test('records a later in-flight success while paused and skips it on resume', as
   assert.equal(writes.filter(write => write.batchIndex === 1).length, 1)
   assert.equal(writes.filter(write => write.batchIndex === 0).length, 5)
   assert.equal(writes.find(write => write.batchIndex === 0).body, writes.at(-1).body)
+})
+
+test('does not expose paused until every old in-flight write has settled', async () => {
+  let releaseSecond
+  const secondMayFinish = new Promise(resolve => { releaseSecond = resolve })
+  const calls = []
+  let firstFailures = 4
+  const manager = createBulkJobManager({
+    writeBatch: async request => {
+      calls.push(request.batchIndex)
+      if (request.batchIndex === 0 && firstFailures > 0) {
+        firstFailures -= 1
+        throw Object.assign(new Error('temporary'), { retryable: true })
+      }
+      if (request.batchIndex === 1) await secondMayFinish
+    },
+    sleep: async () => {},
+    randomJitter: () => 0,
+  })
+  const started = manager.start({
+    id: 'pause-barrier',
+    connectionIdentity: 'conn-a',
+    plan: plan(['2026-07-25'], 1_001),
+    seed: 'seed',
+  })
+
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(manager.get(started.id).status, 'running')
+  assert.throws(() => manager.resume(started.id), error => error.code === 'BULK_JOB_NOT_PAUSED')
+
+  releaseSecond()
+  await waitFor(manager, started.id, 'paused')
+  manager.resume(started.id)
+  const finished = await waitFor(manager, started.id, 'succeeded')
+  assert.equal(finished.completedBatches, finished.totalBatches)
+  assert.deepEqual(calls, [0, 1, 0, 0, 0, 0])
 })
 
 test('cancel aborts in-flight writes, is idempotent, and shutdown resolves after cancellation', async () => {
