@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 
 const source = fs.readFileSync(new URL('./api.ts', import.meta.url), 'utf8')
+const bridgeServer = fs.readFileSync(new URL('../../bridge/server.mjs', import.meta.url), 'utf8')
 
 test('bulk API client exposes exact metadata and job routes', () => {
   for (const method of [
@@ -17,6 +18,8 @@ test('bulk API client exposes exact metadata and job routes', () => {
   assert.match(source, /encodeURIComponent\(id\)/)
   assert.match(source, /\/resume/)
   assert.match(source, /\/cancel/)
+  assert.match(bridgeServer, /pathname==='\/retention-policies'[\s\S]*listRetentionPolicies\(current,database\)/)
+  assert.match(bridgeServer, /pathname==='\/tag-values'[\s\S]*listTagValues\(current,database,measurement,tag,1000\)/)
 })
 
 test('bulk client posts JSON plans and preserves bridge error details', () => {
