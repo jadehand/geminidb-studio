@@ -198,6 +198,6 @@ test('cancel aborts in-flight writes, is idempotent, and shutdown resolves after
 
   const second = createBulkJobManager({ writeBatch: () => new Promise(() => {}) })
   second.start({ id: 'shutdown', connectionIdentity: 'conn-a', plan: plan(['2026-07-25'], 1), seed: 'seed' })
-  await second.shutdown(0)
+  await second.shutdown({ timeoutMs:0 })
   assert.equal(second.get('shutdown').status, 'cancelled')
 })

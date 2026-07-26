@@ -127,6 +127,8 @@ export function createBulkJobManager({
         try {
           await writeWithRetry(job, {
             connectionIdentity: job.connectionIdentity,
+            database: job.plan.database,
+            retentionPolicy: job.plan.retentionPolicy,
             measurement: target.measurement,
             dateIndex,
             batchIndex,
@@ -275,7 +277,8 @@ export function createBulkJobManager({
     return snapshot(job)
   }
 
-  async function shutdown(timeoutMs = 5_000) {
+  async function shutdown(options = 5_000) {
+    const timeoutMs = typeof options === 'number' ? options : options?.timeoutMs ?? 5_000
     const job = activeJobId ? jobs.get(activeJobId) : null
     if (!job || !UNFINISHED.has(job.status)) return
     await cancel(job.id)
