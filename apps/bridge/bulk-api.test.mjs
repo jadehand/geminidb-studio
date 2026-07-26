@@ -90,6 +90,8 @@ test('creation revalidates preview and control routes enforce connection identit
   const preview = await request(api, 'POST', '/bulk-jobs/preview', planInput())
   assert.equal((await request(api, 'POST', '/bulk-jobs', { previewId:preview.body.previewId })).status, 409)
   assert.equal((await request(api, 'POST', '/bulk-jobs', { previewId:preview.body.previewId, acknowledgeCreate:true })).status, 200)
+  const firstJob = await request(api, 'GET', '/bulk-jobs/active')
+  assert.equal('connectionIdentity' in firstJob.body, false)
   const started = await request(api, 'POST', '/bulk-jobs', { previewId:preview.body.previewId, acknowledgeCreate:true })
   assert.equal(started.body.code, 'BULK_PREVIEW_REQUIRED')
 

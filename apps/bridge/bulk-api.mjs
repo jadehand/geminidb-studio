@@ -61,6 +61,12 @@ function publicPreview(preview) {
   }
 }
 
+function publicJob(job) {
+  if (!job) return job
+  const { connectionIdentity: _connectionIdentity, ...result } = job
+  return result
+}
+
 async function loadRemoteState(influx, session, input, now) {
   if (!input || typeof input !== 'object' || typeof input.database !== 'string' || !input.database.trim()) {
     throw new Error('database is required')
@@ -186,7 +192,7 @@ export function createBulkApi({ jobManager, influx, now = () => Date.now(), rand
     try {
       const job = jobManager.start({ id:String(randomUUID()), connectionIdentity:identity, plan:preview.plan, seed:preview.seed })
       previews.delete(identity)
-      return { status:200, body:job }
+      return { status:200, body:publicJob(job) }
     } catch (error) {
       return apiError(409, String(error?.code ?? 'BULK_JOB_ACTIVE'), String(error?.message ?? 'Bulk job cannot start'))
     }
@@ -205,22 +211,22 @@ export function createBulkApi({ jobManager, influx, now = () => Date.now(), rand
     if (method === 'GET' && pathname === '/bulk-jobs/active') {
       const job = jobManager.active()
       if (!job || !ownedJob(session, job.id)) return notFound()
-      return { status:200, body:job }
+      return { status:200, body:publicJob(job) }
     }
     const match = pathname.match(/^\/bulk-jobs\/([^/]+)(?:\/(resume|cancel))?$/)
     if (!match) return apiError(404, 'BULK_ROUTE_NOT_FOUND', 'Bulk route does not exist')
     const [, id, action] = match
     const job = ownedJob(session, id)
     if (!job) return notFound()
-    if (method === 'GET' && !action) return { status:200, body:job }
+    if (method === 'GET' && !action) return { status:200, body:publicJob(job) }
     if (method === 'POST' && action === 'resume') {
       try {
-        return { status:200, body:jobManager.resume(id) }
+        return { status:200, body:publicJob(jobManager.resume(id)) }
       } catch {
         return apiError(409, 'BULK_JOB_NOT_PAUSED', 'Only paused jobs can resume')
       }
     }
-    if (method === 'POST' && action === 'cancel') return { status:200, body:await jobManager.cancel(id) }
+    if (method === 'POST' && action === 'cancel') return { status:200, body:publicJob(await jobManager.cancel(id)) }
     return apiError(404, 'BULK_ROUTE_NOT_FOUND', 'Bulk route does not exist')
   }
 
