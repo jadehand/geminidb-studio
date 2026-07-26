@@ -4,13 +4,15 @@ import https from 'node:https'
 const httpAgent = new http.Agent({ keepAlive:true, maxSockets:2 })
 const httpsAgent = new https.Agent({ keepAlive:true, maxSockets:2 })
 const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504])
+const RETRYABLE_NETWORK_CODES = new Set(['ETIMEDOUT', 'ECONNRESET'])
 
 export class InfluxHttpError extends Error {
-  constructor(message, statusCode) {
+  constructor(message, statusCode, code) {
     super(message)
     this.name = 'InfluxHttpError'
     this.statusCode = statusCode
-    this.retryable = RETRYABLE_STATUS_CODES.has(statusCode)
+    this.code = code
+    this.retryable = RETRYABLE_STATUS_CODES.has(statusCode) || RETRYABLE_NETWORK_CODES.has(code)
   }
 }
 
@@ -41,11 +43,12 @@ function request(config, method, path, body = '', { signal } = {}) {
         resolve({ statusCode, text })
       })
     })
-    req.on('timeout', () => req.destroy(new Error(`GeminiDB Influx 请求超过 ${config.timeoutMs || 30000}ms`)))
+    req.on('timeout', () => req.destroy(Object.assign(new Error(`GeminiDB Influx 请求超过 ${config.timeoutMs || 30000}ms`), { code:'ETIMEDOUT' })))
     req.on('error', error => {
       if (isHttps && /wrong version number|wrong version|tls_validate_record_header/i.test(error.message)) {
         return reject(new Error('目标服务不是 HTTPS，可能只支持 HTTP。请在连接设置中将协议切换为 HTTP 后重试。'))
       }
+      if (RETRYABLE_NETWORK_CODES.has(error.code)) return reject(new InfluxHttpError(error.message, undefined, error.code))
       reject(error)
     })
     if (body) req.write(body)

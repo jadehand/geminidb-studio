@@ -16,6 +16,7 @@ async function fixture() {
         if (url.searchParams.get('db') === 'too-many') { response.statusCode = 429; return response.end(JSON.stringify({ error: 'rate limited' })) }
         if (url.searchParams.get('db') === 'bad-write') { response.statusCode = 400; return response.end(JSON.stringify({ error: 'bad request' })) }
         if (url.searchParams.get('db') === 'slow-write') return
+        if (url.searchParams.get('db') === 'reset-write') return request.socket.destroy()
         response.statusCode = 204; return response.end()
       }
       const query = url.searchParams.get('q')
@@ -91,6 +92,20 @@ test('an aborted bulk write destroys its request', async t => {
   const write = influxWrite(config, 'slow-write', 'cpu value=1 1', { signal:controller.signal })
   controller.abort()
   await assert.rejects(write, /abort|aborted/i)
+})
+
+test('a request timeout is a retryable Influx error', async t => {
+  const upstream = await fixture()
+  t.after(() => upstream.server.close())
+  const config = { endpoint: upstream.endpoint, username: 'rwuser', password: 'secret', timeoutMs: 20, insecureSkipVerify: false }
+  await assert.rejects(influxWrite(config, 'slow-write', 'cpu value=1 1'), error => error instanceof InfluxHttpError && error.retryable === true && error.code === 'ETIMEDOUT')
+})
+
+test('a connection reset is a retryable Influx error', async t => {
+  const upstream = await fixture()
+  t.after(() => upstream.server.close())
+  const config = { endpoint: upstream.endpoint, username: 'rwuser', password: 'secret', timeoutMs: 2000, insecureSkipVerify: false }
+  await assert.rejects(influxWrite(config, 'reset-write', 'cpu value=1 1'), error => error instanceof InfluxHttpError && error.retryable === true && error.code === 'ECONNRESET')
 })
 
 test.after(() => closeInfluxAgents())
