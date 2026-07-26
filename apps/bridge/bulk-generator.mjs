@@ -235,11 +235,17 @@ function numberBounds(field, domain, index) {
 function chooseInteger(min, max, excluded, random) {
   if (!Number.isSafeInteger(min) || !Number.isSafeInteger(max) || min > max) return undefined
   const blocked = [...excluded].filter(value => Number.isSafeInteger(value) && value >= min && value <= max).sort((a, b) => a - b)
-  const count = max - min + 1 - blocked.length
-  if (!Number.isSafeInteger(count) || count <= 0) return undefined
-  let offset = Math.floor(random() * count)
-  for (const value of blocked) if (min + offset >= value) offset += 1
-  return min + offset
+  const start = BigInt(min)
+  const count = BigInt(max) - start + 1n - BigInt(blocked.length)
+  if (count <= 0n) return undefined
+  const unit = random()
+  if (!isFiniteNumber(unit) || unit < 0 || unit >= 1) throw generatorError('random must return a finite value from 0 (inclusive) to 1 (exclusive)')
+  const scale = 1n << 53n
+  let offset = (BigInt(Math.floor(unit * Number(scale))) * count) / scale
+  for (const value of blocked) {
+    if (offset >= BigInt(value) - start) offset += 1n
+  }
+  return Number(start + offset)
 }
 
 function nextUp(value) {
@@ -270,7 +276,9 @@ function chooseFloat(min, max, lowerInclusive, upperInclusive, excluded, random)
   const last = upperInclusive ? max : nextDown(max)
   if (first > last) return undefined
   if (first === last) return excluded.has(first) ? undefined : first
-  let value = first + random() * (last - first)
+  const unit = random()
+  if (!isFiniteNumber(unit) || unit < 0 || unit >= 1) throw generatorError('random must return a finite value from 0 (inclusive) to 1 (exclusive)')
+  let value = first * (1 - unit) + last * unit
   if (value > last) value = last
   if (!excluded.has(value)) return value
   for (const candidate of [first, last, nextUp(first), nextDown(last)]) {
@@ -406,18 +414,17 @@ export function compileConstraints(fields, constraints = []) {
 }
 
 function rejectLineBreaks(value, label) {
-  if (typeof value === 'string' && /[\r\n]/.test(value)) throw generatorError(`${label} cannot contain CR/LF`)
-  return value
+  const stringValue = String(value)
+  if (/[\r\n]/.test(stringValue)) throw generatorError(`${label} cannot contain CR/LF`)
+  return stringValue
 }
 
 function escapeIdentifier(value, label) {
-  rejectLineBreaks(value, label)
-  return String(value).replace(/([ ,=])/g, '\\$1')
+  return rejectLineBreaks(value, label).replace(/([ ,=])/g, '\\$1')
 }
 
 function escapeString(value, label) {
-  rejectLineBreaks(value, label)
-  return String(value).replace(/([\\"])/g, '\\$1')
+  return rejectLineBreaks(value, label).replace(/([\\"])/g, '\\$1')
 }
 
 function normalizeObjectEntries(value, label) {

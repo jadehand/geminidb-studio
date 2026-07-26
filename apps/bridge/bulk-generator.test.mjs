@@ -140,6 +140,36 @@ test('float uniform generation spans the entire feasible range', () => {
   assert.ok(compiled.generate(() => 0.999, 0).value > 99)
 })
 
+test('keeps extreme float ranges finite at random boundaries and deterministic', () => {
+  const compiled = compileConstraints([
+    { name: 'value', type: 'float', generator: { kind: 'random-number', min: -1e308, max: 1e308 } },
+  ], [])
+  assert.equal(compiled.generate(() => 0, 0).value, -1e308)
+  assert.equal(compiled.generate(() => 0.5, 0).value, 0)
+  assert.ok(Number.isFinite(compiled.generate(() => 1 - Number.EPSILON, 0).value))
+  const first = compiled.generate(createSeededRandom('extreme-float'), 0)
+  const second = compiled.generate(createSeededRandom('extreme-float'), 0)
+  assert.deepEqual(first, second)
+})
+
+test('generates the entire safe integer range without safe-count overflow', () => {
+  const compiled = compileConstraints([
+    {
+      name: 'value',
+      type: 'integer',
+      generator: { kind: 'random-number', min: -Number.MAX_SAFE_INTEGER, max: Number.MAX_SAFE_INTEGER },
+    },
+  ], [])
+  const values = [0, 0.5, 1 - Number.EPSILON].map(random => compiled.generate(() => random, 0).value)
+  assert.deepEqual(values.slice(0, 2), [-Number.MAX_SAFE_INTEGER, 0])
+  assert.ok(Number.isSafeInteger(values[2]))
+  assert.ok(values[2] <= Number.MAX_SAFE_INTEGER)
+  assert.deepEqual(
+    compiled.generate(createSeededRandom('wide-int'), 0),
+    compiled.generate(createSeededRandom('wide-int'), 0),
+  )
+})
+
 test('supports string and boolean equality / inequality constraints', () => {
   const stringFields = [
     { name: 'left', type: 'string', generator: { kind: 'fixed', value: 'a' } },
@@ -211,6 +241,7 @@ test('rejects CR/LF in every user-controlled Line Protocol component', () => {
     { ...point, tags: { host: 'node\n01' } },
     { ...point, fields: { 'value\r': { type: 'string', value: 'ok' } } },
     { ...point, fields: { value: { type: 'string', value: 'bad\nvalue' } } },
+    { ...point, tags: { host: { toString: () => 'node\n01' } } },
   ]
   for (const invalidPoint of invalidPoints) assert.throws(() => encodeLineProtocol(invalidPoint), /CR\/LF/)
 })
