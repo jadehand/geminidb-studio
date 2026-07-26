@@ -14,8 +14,8 @@ function apiError(status, code, message, details) {
 }
 
 function connectionIdentity(session, database) {
-  if (!session?.endpoint || !session?.username || !database) return null
-  return `${session.endpoint}\u0000${session.username}\u0000${database}`
+  if (!session?.bulkIdentity || !database) return null
+  return `${session.bulkIdentity}\u0000${database}`
 }
 
 function stableValue(value) {

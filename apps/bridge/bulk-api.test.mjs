@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createBulkApi } from './bulk-api.mjs'
 
-const session = Object.freeze({ endpoint:'http://127.0.0.1:8635', username:'rwuser', environment:'test', readOnly:false })
+const session = Object.freeze({ endpoint:'http://127.0.0.1:8635', username:'rwuser', bulkIdentity:'session-a', environment:'test', readOnly:false })
 
 function planInput(overrides = {}) {
   return {
@@ -94,7 +94,7 @@ test('creation revalidates preview and control routes enforce connection identit
   assert.equal(started.body.code, 'BULK_PREVIEW_REQUIRED')
 
   const fresh = await request(api, 'POST', '/bulk-jobs/preview', planInput())
-  const oldSession = { ...session, username:'other' }
+  const oldSession = { ...session, username:'other', bulkIdentity:'session-other' }
   assert.equal((await request(api, 'GET', '/bulk-jobs/active', undefined, oldSession)).body.code, 'BULK_JOB_NOT_FOUND')
   const created = await request(api, 'POST', '/bulk-jobs', { previewId:fresh.body.previewId, acknowledgeCreate:true })
   assert.equal(created.status, 200)
