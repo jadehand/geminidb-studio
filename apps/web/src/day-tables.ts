@@ -5,6 +5,11 @@ export function tableTimestamp(name: string) {
   return match ? Number(match[1]) : null
 }
 
+export function dayTablePrefix(name: string) {
+  const match = name.match(/^(.*)_(\d{10})$/)
+  return match ? (match[1] || null) : (name || null)
+}
+
 function beijingDay(timestampMs: number) {
   return new Intl.DateTimeFormat('en-CA', { timeZone:'Asia/Shanghai', year:'numeric', month:'2-digit', day:'2-digit' }).format(new Date(timestampMs))
 }
