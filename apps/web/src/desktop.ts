@@ -1,4 +1,5 @@
 import { invoke, isTauri } from '@tauri-apps/api/core'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { open } from '@tauri-apps/plugin-dialog'
 
 export type DesktopBridgeStatus = {
@@ -26,4 +27,17 @@ export async function chooseExportDirectory() {
 export async function writeExportFile(directory: string, filename: string, content: string) {
   if (!isTauri()) return null
   return invoke<string>('export_result_file', { directory, filename, content })
+}
+
+export async function registerDesktopCloseGuard(shouldGuard:() => boolean, onGuardedClose:() => void) {
+  if (!isTauri()) return () => {}
+  return getCurrentWindow().onCloseRequested(event => {
+    if (!shouldGuard()) return
+    event.preventDefault()
+    onGuardedClose()
+  })
+}
+
+export async function destroyDesktopWindow() {
+  if (isTauri()) await getCurrentWindow().destroy()
 }

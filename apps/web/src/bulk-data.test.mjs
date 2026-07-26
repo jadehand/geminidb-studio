@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { BULK_DRAFT_KEY, BULK_HISTORY_KEY, appendBulkHistory, bulkEntryState, clearBulkDraft, copyHistoryToDraft, estimateBulkDraft, loadBulkDraft, loadBulkHistory, saveBulkDraft, stepForBulkError } from './bulk-data.ts'
+import { BULK_ACTIVE_KEY, BULK_DRAFT_KEY, BULK_HISTORY_KEY, appendBulkHistory, bulkEntryState, clearActiveBulkRun, clearBulkDraft, copyHistoryToDraft, estimateBulkDraft, loadActiveBulkRun, loadBulkDraft, loadBulkHistory, saveActiveBulkRun, saveBulkDraft, stepForBulkError } from './bulk-data.ts'
 
 const draft = (overrides = {}) => ({ prefix:'cpu', database:'monitoring', sourceMeasurement:'cpu_1784563200', retentionPolicy:'autogen', dates:['2026-07-26'], startTime:'00:00:00', endTime:'00:01:00', intervalSeconds:60, tags:[{ name:'host', generator:{ kind:'list', values:['node-01','node-02'] } }], fields:[{ name:'usage', type:'float', generator:{ kind:'random-number', min:0, max:100 } }], constraints:[], ...overrides })
 
@@ -36,6 +36,18 @@ test('history keeps twenty newest safe summaries and copy removes execution stat
   for (const key of ['jobId','status','seed','progress','preview','previewId','completedAt']) assert.equal(key in copied, false)
   assert.equal(copied.prefix, 'cpu')
   values.set(BULK_HISTORY_KEY, JSON.stringify({ version:2, items:history })); assert.deepEqual(loadBulkHistory(), [])
+}))
+
+test('active run summary survives remount without secrets and history is idempotent by job id', () => withStorage(values => {
+  saveActiveBulkRun('job-1', { ...draft(), previewId:'expired', seed:'secret' })
+  assert.equal(BULK_ACTIVE_KEY, 'gdb.bulkData.active.v1')
+  assert.deepEqual(loadActiveBulkRun(), { jobId:'job-1', draft:draft() })
+  const item = { ...draft(), jobId:'job-1', status:'succeeded', completedAt:1 }
+  appendBulkHistory(item); appendBulkHistory({ ...item, completedAt:2 })
+  assert.equal(loadBulkHistory().filter(current => current.jobId === 'job-1').length, 1)
+  assert.equal(loadBulkHistory()[0].completedAt, 2)
+  clearActiveBulkRun('other'); assert.equal(values.has(BULK_ACTIVE_KEY), true)
+  clearActiveBulkRun('job-1'); assert.equal(values.has(BULK_ACTIVE_KEY), false)
 }))
 
 test('instantaneous estimate enforces seven dates and calculates points and worst case series', () => {

@@ -56,6 +56,12 @@ function publicPreview(preview) {
     expiresAt:preview.expiresAt,
     pointCount:preview.plan.pointCount,
     maxNewSeries:preview.plan.maxNewSeries,
+    targets:preview.plan.targets.map(target => ({
+      date:target.date,
+      measurement:target.measurement,
+      exists:Object.hasOwn(preview.targets, target.measurement),
+    })),
+    requiredAcknowledgements:acknowledgementsNeeded(preview),
     warnings:preview.warnings,
     samples:preview.samples,
   }

@@ -5,10 +5,12 @@ export type { BulkDraft, BulkHistoryItem, BulkIssue, BulkJobStatus, BulkPlanRequ
 
 export const BULK_DRAFT_KEY = 'gdb.bulkData.draft.v1'
 export const BULK_HISTORY_KEY = 'gdb.bulkData.history.v1'
+export const BULK_ACTIVE_KEY = 'gdb.bulkData.active.v1'
 const HISTORY_LIMIT = 20
 
 type StoredBulkDraft = { version:1; savedAt:number; draft:BulkDraft }
 type StoredBulkHistory = { version:1; items:BulkHistoryItem[] }
+type StoredActiveBulkRun = { version:1; jobId:string; draft:BulkDraft }
 type BulkEntryContext = { connection?:Pick<Connection, 'environment'|'readOnly'> | null; connected:boolean; database?:string | null }
 
 function withoutSensitive<T extends Record<string, unknown>>(value: T) {
@@ -63,7 +65,18 @@ export function clearBulkDraft() { localStorage.removeItem(BULK_DRAFT_KEY) }
 export function loadBulkHistory() { return safelyStoredHistory(load<unknown>(BULK_HISTORY_KEY, null)) }
 export function appendBulkHistory(item: BulkHistoryItem) {
   const newest = withoutSensitive(item) as BulkHistoryItem
-  save<StoredBulkHistory>(BULK_HISTORY_KEY, { version:1, items:[newest, ...loadBulkHistory()].slice(0, HISTORY_LIMIT) })
+  save<StoredBulkHistory>(BULK_HISTORY_KEY, { version:1, items:[newest, ...loadBulkHistory().filter(current => current.jobId !== newest.jobId)].slice(0, HISTORY_LIMIT) })
+}
+export function saveActiveBulkRun(jobId:string, draft:BulkDraft) { save<StoredActiveBulkRun>(BULK_ACTIVE_KEY, { version:1, jobId, draft:withoutSensitive(draft) }) }
+export function loadActiveBulkRun() {
+  const stored = load<Partial<StoredActiveBulkRun> | null>(BULK_ACTIVE_KEY, null)
+  return stored?.version === 1 && typeof stored.jobId === 'string' && stored.draft && typeof stored.draft === 'object'
+    ? { jobId:stored.jobId, draft:withoutSensitive(stored.draft as BulkDraft) }
+    : null
+}
+export function clearActiveBulkRun(jobId?:string) {
+  const active = loadActiveBulkRun()
+  if (!jobId || active?.jobId === jobId) localStorage.removeItem(BULK_ACTIVE_KEY)
 }
 export function copyHistoryToDraft(item: BulkHistoryItem): BulkDraft {
   const { jobId:_jobId, status:_status, seed:_seed, progress:_progress, preview:_preview, previewId:_previewId, completedAt:_completedAt, ...draft } = item

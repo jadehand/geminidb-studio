@@ -7,7 +7,7 @@ import ResultsTable from './ResultsTable'
 import { inspectInfluxQL, lineDiff, localFix } from './diagnostics'
 import { beginSession, clearWorkspace, endSession, readWorkspace, writeWorkspace } from './workspace'
 import { createDiagnosticProvider } from './diagnostic-provider'
-import { chooseExportDirectory, getDesktopBridgeStatus, restartDesktopBridge, writeExportFile, type DesktopBridgeStatus } from './desktop'
+import { chooseExportDirectory, destroyDesktopWindow, getDesktopBridgeStatus, registerDesktopCloseGuard, restartDesktopBridge, writeExportFile, type DesktopBridgeStatus } from './desktop'
 import { connectionForTransport, endpointProtocol, withEndpointProtocol } from './endpoint'
 import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH } from './sidebar-width'
 import { conversionFromMilliseconds, formatBeijing, formatUtcInput, parseDateTime, parseUnixTimestamp, type DateTimeZone, type TimeConversion } from './time-converter'
@@ -19,6 +19,7 @@ import SchemaDialog from './SchemaDialog'
 import BulkDataWizard from './BulkDataWizard'
 import { initialTourStatus, TOUR_STEPS, TOUR_STORAGE_KEY, type TourStatus } from './onboarding'
 import { bulkEntryState } from './bulk-data'
+import { isUnfinishedBulkJob, waitForBulkJobTerminal } from './app-close'
 import type { BulkJobStatus, ClaudeDiagnosis, ClaudeSettings, Connection, Execution, Favorite, MeasurementSchema, QueryRow } from './types'
 const QueryEditor = lazy(() => import('./QueryEditor'))
 
@@ -77,6 +78,8 @@ export default function App() {
   const [timeDialog, setTimeDialog] = useState(false)
   const [bulkWizardOpen, setBulkWizardOpen] = useState(false)
   const [activeBulkJob, setActiveBulkJob] = useState<BulkJobStatus | null>(null)
+  const [bulkCloseGuardOpen, setBulkCloseGuardOpen] = useState(false)
+  const [bulkExitBusy, setBulkExitBusy] = useState(false)
   const [schemaDialog,setSchemaDialog]=useState<{measurement:string;schema:MeasurementSchema}|null>(null)
   const [themePreference,setThemePreference]=useState<ThemePreference>(()=>load('gdb.theme','system'))
   const [systemDark,setSystemDark]=useState(()=>window.matchMedia('(prefers-color-scheme: dark)').matches)
@@ -93,6 +96,8 @@ export default function App() {
   const [tourStatus,setTourStatus]=useState<TourStatus>(()=>initialTourStatus(load(TOUR_STORAGE_KEY,'new')))
   const [tourOpen,setTourOpen]=useState(()=>initialTourStatus(load(TOUR_STORAGE_KEY,'new'))==='new')
   const diagnosticAbort=useRef<AbortController|null>(null),diagnosticRequest=useRef(0)
+  const activeBulkJobRef=useRef<BulkJobStatus|null>(null)
+  activeBulkJobRef.current=activeBulkJob
 
   const currentConnection = connections.find(c => c.id === activeConnection) || connections[0]
   const bulkEntry = bulkEntryState({ connection:currentConnection, connected:status.includes('已连接'), database })
@@ -170,7 +175,16 @@ export default function App() {
     }
     if (currentConnection.autoLogin) void connect(currentConnection)
   }, [])
-  useEffect(()=>{const close=()=>endSession();window.addEventListener('beforeunload',close);return()=>window.removeEventListener('beforeunload',close)},[])
+  useEffect(()=>{
+    const close=(event:BeforeUnloadEvent)=>{if(isUnfinishedBulkJob(activeBulkJobRef.current?.status)){event.preventDefault();event.returnValue='';return}endSession()}
+    window.addEventListener('beforeunload',close)
+    let disposed=false,unlisten:(()=>void)|undefined
+    void registerDesktopCloseGuard(
+      ()=>isUnfinishedBulkJob(activeBulkJobRef.current?.status),
+      ()=>setBulkCloseGuardOpen(true),
+    ).then(next=>{if(disposed)next();else unlisten=next})
+    return()=>{disposed=true;unlisten?.();window.removeEventListener('beforeunload',close)}
+  },[])
   useEffect(()=>{const timer=window.setTimeout(()=>{try{writeWorkspace({database,measurement:selectedTable,dayRange,resultView:view,activeConnection,activeTabId,queryTabs,sideTool,sideOpen})}catch{toast('工作区保存失败，请检查可用空间')}save('gdb.workspace.database',database);save('gdb.workspace.measurement',selectedTable);save('gdb.workspace.dayRange',dayRange);save('gdb.workspace.resultView',view)},500);return()=>window.clearTimeout(timer)},[database,selectedTable,dayRange,view,activeConnection,activeTabId,queryTabs,sideTool,sideOpen])
   function restoreWorkspace(){const snapshot=readWorkspace();if(snapshot){setDatabase(snapshot.database);setSelectedTable(snapshot.measurement);setDayRange(snapshot.dayRange);setView(visibleResultView(snapshot.resultView));setActiveConnection(snapshot.activeConnection);setActiveTabId(snapshot.activeTabId);setQueryTabs(snapshot.queryTabs);setSideTool(snapshot.sideTool);setSideOpen(snapshot.sideOpen)}setRecoveryOpen(false);toast('已恢复上次工作区')}
   function discardWorkspace(){clearWorkspace();persistQueryTabs([DEFAULT_TAB]);setActiveTabId(DEFAULT_TAB.id);save('gdb.activeQueryTab',DEFAULT_TAB.id);setSelectedTable('');setView('result');setRecoveryOpen(false);toast('已创建新工作区')}
@@ -178,6 +192,26 @@ export default function App() {
   function dismissDatabaseHint(){setDatabaseHintOpen(false);save('gdb.databaseSwitcherSeen',true)}
   function finishTour(status:Exclude<TourStatus,'new'>){setTourOpen(false);setTourStatus(status);save(TOUR_STORAGE_KEY,status);dismissDatabaseHint()}
   function openTour(){setTourOpen(true);setTourStatus('new')}
+  async function stopBulkAndExit(){
+    const job=activeBulkJobRef.current
+    if(!job)return
+    setBulkExitBusy(true)
+    const startedAt=Date.now()
+    const controller=new AbortController()
+    let timedOut=false
+    const timeout=window.setTimeout(()=>{timedOut=true;controller.abort()},3000)
+    try{
+      const cancelled=await bridge.cancelBulkJob(job.id,controller.signal)
+      setActiveBulkJob(cancelled)
+      const terminal=await waitForBulkJobTerminal(()=>bridge.bulkJob(job.id,controller.signal),Math.max(0,3000-(Date.now()-startedAt)))
+      setActiveBulkJob(terminal)
+    }catch(error){
+      if(!timedOut){window.clearTimeout(timeout);toast(error instanceof Error?error.message:'停止任务失败，请稍后重试');setBulkExitBusy(false);return}
+    }
+    window.clearTimeout(timeout)
+    endSession()
+    await destroyDesktopWindow()
+  }
 
   async function changeDatabase(next: string) {
     if (!next || next === database) return
@@ -286,7 +320,7 @@ export default function App() {
     {bridgeStatus&&!bridgeStatus.running&&<div className="bridge-alert" role="alert"><span><b>GeminiDB Bridge 启动失败</b><small>{bridgeStatus.error||'后台服务不可用，客户端仍可打开。'}{bridgeStatus.logPath&&<> · 日志：{bridgeStatus.logPath}</>}</small></span><button disabled={bridgeRetrying} onClick={()=>void retryBridge()}>{bridgeRetrying?'正在重试…':'重试 Bridge'}</button></div>}
     <header><div className="brand"><span className="brand-mark"/><b>GeminiDB Studio</b></div><div className="topbar">
       <div className="database-switcher" data-tour="database-switcher"><label><span>Database</span><select aria-label="当前 Database" title="切换当前 Database，无需执行 USE 命令" value={database} onChange={e => void changeDatabase(e.target.value)} disabled={!databases.length}>{databases.map(db => <option key={db}>{db}</option>)}</select></label>{databaseHintOpen&&!tourOpen&&tourStatus!=='new'&&databases.length>1&&<div className="database-coachmark" role="status"><b>切换 Database</b><p>可直接在这里选择，无需执行 <code>USE database_xxx</code>。</p><button onClick={dismissDatabaseHint}>知道了</button></div>}</div>
-      <button className="bulk-entry" style={{ marginLeft:24 }} disabled={!bulkEntry.enabled} title={bulkEntry.reason || '批量生成测试数据'} onClick={() => { if (!bulkEntry.enabled) return; setBulkWizardOpen(true); void bridge.activeBulkJob().then(setActiveBulkJob).catch(error => { if (error instanceof BridgeError && error.code === 'BULK_JOB_NOT_FOUND') setActiveBulkJob(null); else toast(error instanceof Error ? error.message : '无法读取进行中的任务') }) }}>▦ 批量造数</button><button className="utility-button time-tool" data-tour="time-converter" onClick={() => setTimeDialog(true)} title="UTC、北京时间与 Unix 时间戳互相转换"><span>◷</span><b>时间转换</b></button><button className="icon-button tour-help" onClick={openTour} title="重新查看功能导览" aria-label="重新查看功能导览">?</button><button className="utility-button theme-tool" onClick={cycleTheme} title={`当前：${THEME_LABEL[themePreference]}；点击切换主题`}><span>{resolvedTheme==='dark'?'☾':'◐'}</span><b>{THEME_LABEL[themePreference]}</b></button><button className={`connection-state connection-control env-${currentConnection?.environment||'dev'} ${status.includes('失败') ? 'error' : ''}`} onClick={() => currentConnection && setConnectionDialog(currentConnection)} title="编辑当前连接"><i/>{status}<UiIcon name="settings"/></button>
+      <button className="bulk-entry" style={{ marginLeft:24 }} disabled={!bulkEntry.enabled} title={bulkEntry.reason || '批量生成测试数据'} onClick={() => { if (!bulkEntry.enabled) return; setBulkWizardOpen(true); void bridge.activeBulkJob().then(setActiveBulkJob).catch(error => { if (error instanceof BridgeError && error.code === 'BULK_JOB_NOT_FOUND') setActiveBulkJob(null); else toast(error instanceof Error ? error.message : '无法读取进行中的任务') }) }}>▦ {activeBulkJob&&isUnfinishedBulkJob(activeBulkJob.status)?`批量造数 ${activeBulkJob.totalPoints?Math.round(activeBulkJob.completedPoints/activeBulkJob.totalPoints*100):0}%`:'批量造数'}</button><button className="utility-button time-tool" data-tour="time-converter" onClick={() => setTimeDialog(true)} title="UTC、北京时间与 Unix 时间戳互相转换"><span>◷</span><b>时间转换</b></button><button className="icon-button tour-help" onClick={openTour} title="重新查看功能导览" aria-label="重新查看功能导览">?</button><button className="utility-button theme-tool" onClick={cycleTheme} title={`当前：${THEME_LABEL[themePreference]}；点击切换主题`}><span>{resolvedTheme==='dark'?'☾':'◐'}</span><b>{THEME_LABEL[themePreference]}</b></button><button className={`connection-state connection-control env-${currentConnection?.environment||'dev'} ${status.includes('失败') ? 'error' : ''}`} onClick={() => currentConnection && setConnectionDialog(currentConnection)} title="编辑当前连接"><i/>{status}<UiIcon name="settings"/></button>
     </div></header>
 
     <aside className="left-sidebar"><nav className="tool-rail" aria-label="工具窗口"><button className={sideOpen && sideTool === 'connections' ? 'active' : ''} onClick={() => switchTool('connections')} title="连接"><UiIcon name="connection"/></button><button data-tour="catalog" className={sideOpen && sideTool === 'catalog' ? 'active' : ''} onClick={() => switchTool('catalog')} title="数据目录"><UiIcon name="catalog"/></button></nav>
@@ -304,6 +338,7 @@ export default function App() {
     {recoveryOpen&&<div className="modal"><div className="dialog recovery-dialog"><h2>恢复查询工作区</h2><p>检测到上次未正常关闭。可以恢复查询页签和目录位置；不会自动执行 SQL。</p><div className="dialog-actions"><button onClick={discardWorkspace}>重新开始</button><button className="primary" onClick={restoreWorkspace}>恢复工作区</button></div></div></div>}
     {timeDialog && <TimeDialog onClose={() => setTimeDialog(false)}/>} 
     {currentConnection && <BulkDataWizard open={bulkWizardOpen} connection={currentConnection} database={database} tables={tables} activeJob={activeBulkJob} onClose={() => setBulkWizardOpen(false)} onJobChange={setActiveBulkJob} onNotify={toast}/>}
+    {bulkCloseGuardOpen&&<div className="modal"><div className="dialog"><h2>批量造数仍在运行</h2><p>直接退出会中断尚未写入的批次。已成功写入的数据不会回滚。</p><div className="dialog-actions"><button disabled={bulkExitBusy} onClick={()=>setBulkCloseGuardOpen(false)}>继续运行</button><button className="danger" disabled={bulkExitBusy} onClick={()=>void stopBulkAndExit()}>{bulkExitBusy?'正在停止…':'停止任务并退出'}</button></div></div></div>}
     {schemaDialog&&<SchemaDialog database={database} measurement={schemaDialog.measurement} schema={schemaDialog.schema} loading={schemaLoading} onRefresh={refreshSchemaDialog} onClose={()=>setSchemaDialog(null)} onMessage={toast}/>}
     {claudeSettingsOpen&&<ClaudeSettingsDialog settings={claudeSettings} onClose={()=>setClaudeSettingsOpen(false)} onSave={(settings,key)=>{setClaudeSettings(settings);save('gdb.claude.settings',settings);if(key)void saveCredential('claude-api',key);setClaudeSettingsOpen(false);toast('诊断设置已保存')}}/>}
     {tourOpen&&<FeatureTour steps={TOUR_STEPS} onComplete={()=>finishTour('completed')} onSkip={()=>finishTour('skipped')}/>}

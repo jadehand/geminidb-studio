@@ -60,6 +60,8 @@ test('preview returns only twenty stable samples, estimate, warnings, and opaque
   assert.equal(first.body.pointCount, 20)
   assert.equal(first.body.previewId, 'id-1')
   assert.equal(first.body.expiresAt, 901_000)
+  assert.deepEqual(first.body.targets, [{ date:'2026-07-26', measurement:'cpu_1784995200', exists:false }])
+  assert.deepEqual(first.body.requiredAcknowledgements, ['acknowledgeCreate'])
   assert.equal('seed' in first.body, false)
   assert.equal('lineProtocol' in first.body, false)
   assert.equal(first.body.samples.some(sample => sample.lineProtocol.includes('id-1')), false)
@@ -144,6 +146,7 @@ test('mixed existing and future targets require both acknowledgements', async ()
     dates:['2026-07-26', '2026-07-27'],
   }))
   assert.equal(preview.status, 200)
+  assert.deepEqual(preview.body.requiredAcknowledgements, ['acknowledgeOverwrite', 'acknowledgeCreate'])
 
   const createOnly = await request(api, 'POST', '/bulk-jobs', {
     previewId:preview.body.previewId,

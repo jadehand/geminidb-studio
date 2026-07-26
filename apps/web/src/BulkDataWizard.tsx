@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { bridge, BridgeError } from './api'
-import { estimateBulkDraft, stepForBulkError } from './bulk-data'
+import {
+  appendBulkHistory, clearActiveBulkRun, clearBulkDraft, copyHistoryToDraft, estimateBulkDraft,
+  loadActiveBulkRun, loadBulkDraft, loadBulkHistory, saveActiveBulkRun, saveBulkDraft, stepForBulkError,
+} from './bulk-data'
+import { isUnfinishedBulkJob, nextPollDelay } from './app-close'
 import { dayTablePrefix, tableTimestamp } from './day-tables'
 import type {
   BulkConstraint, BulkDraft, BulkFieldDraft, BulkJobStatus, BulkPreview, BulkTagDraft,
@@ -46,7 +50,8 @@ function initialField(name:string, type:string): BulkFieldDraft {
 function tagValues(tag:BulkTagDraft) {
   if (tag.generator.kind === 'sequence') {
     const { prefix, start, count, padding } = tag.generator
-    return Array.from({ length:Math.max(0, count) }, (_, index) => `${prefix}${String(start + index).padStart(padding, '0')}`)
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(count) || count < 1 || count > 1000 || !Number.isInteger(padding) || padding < 0 || padding > 12) return []
+    return Array.from({ length:count }, (_, index) => `${prefix}${String(start + index).padStart(padding, '0')}`)
   }
   return tag.generator.values
 }
@@ -93,7 +98,7 @@ function OperatorPicker({ value, operators, onChange }:{
   return <div className="operator-picker" ref={root}>
     <button type="button" aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen(value => !value)}
       onKeyDown={event => {
-        if (event.key === 'Escape') setOpen(false)
+        if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setOpen(false) }
         if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
           event.preventDefault()
           const delta = event.key === 'ArrowDown' ? 1 : -1
@@ -137,6 +142,15 @@ export default function BulkDataWizard({ open, connection, database, tables, act
   const [ackCreate, setAckCreate] = useState(false)
   const [ackOverwrite, setAckOverwrite] = useState(false)
   const [ackFuture, setAckFuture] = useState(false)
+  const [stopConfirm, setStopConfirm] = useState(false)
+  const [jobBusy, setJobBusy] = useState(false)
+  const [resumeDraft, setResumeDraft] = useState<BulkDraft | null>(null)
+  const [historyItems, setHistoryItems] = useState(loadBulkHistory)
+  const offeredDraft = useRef(false)
+  const jobDraft = useRef<BulkDraft | null>(null)
+  const recordedJobs = useRef(new Set<string>())
+  const previewAbort = useRef<AbortController | null>(null)
+  const tagRequests = useRef(new Map<string, number>())
 
   const siblings = useMemo(() => tables.filter(table => dayTablePrefix(table) === prefix).toSorted((a,b) => (tableTimestamp(b) ?? 0) - (tableTimestamp(a) ?? 0)), [prefix, tables])
   const draft = useMemo<BulkDraft>(() => ({
@@ -148,8 +162,8 @@ export default function BulkDataWizard({ open, connection, database, tables, act
     return { date, table, exists:tables.includes(table) }
   }), [dates, prefix, tables])
   const hasFuture = dates.some(date => date > formatDate(new Date()))
-  const hasExisting = generatedRows.some(row => row.exists)
-  const hasPending = generatedRows.some(row => !row.exists)
+  const hasExisting = preview ? preview.requiredAcknowledgements.includes('acknowledgeOverwrite') : generatedRows.some(row => row.exists)
+  const hasPending = preview ? preview.requiredAcknowledgements.includes('acknowledgeCreate') : generatedRows.some(row => !row.exists)
   const truncatedTag = tags.find(tag => tag.generator.kind === 'existing' && tag.generator.truncated)
   const validGenerators = tags.every(tag => {
     const values = tagValues(tag)
@@ -171,6 +185,7 @@ export default function BulkDataWizard({ open, connection, database, tables, act
   useEffect(() => {
     if (!open || !sourceMeasurement) return
     let live = true
+    tagRequests.current.clear()
     setSchema(null)
     void Promise.all([bridge.schema(database, sourceMeasurement), ...siblings.filter(table => table !== sourceMeasurement).map(table => bridge.schema(database, table))]).then(([reference, ...others]) => {
       if (!live) return
@@ -205,12 +220,85 @@ export default function BulkDataWizard({ open, connection, database, tables, act
     return () => { document.removeEventListener('keydown', handleKey); previousFocus?.focus() }
   }, [open])
   useEffect(() => {
+    previewAbort.current?.abort()
+    setPreviewing(false)
     setPreview(null)
     setConfirmPrefix('')
     setAckCreate(false)
     setAckOverwrite(false)
     setAckFuture(false)
   }, [draft])
+  useEffect(() => {
+    if (!preview) return
+    const remaining = preview.expiresAt - Date.now()
+    if (remaining <= 0) { setPreview(null); return }
+    const timer = window.setTimeout(() => {
+      setPreview(null)
+      notifyRef.current('预览已过期，请重新生成')
+    }, remaining)
+    return () => window.clearTimeout(timer)
+  }, [preview])
+  useEffect(() => {
+    if (!open || offeredDraft.current || activeJob) return
+    offeredDraft.current = true
+    setResumeDraft(loadBulkDraft())
+  }, [activeJob, open])
+  useEffect(() => {
+    if (!open || activeJob || !prefix || !sourceMeasurement) return
+    const timer = window.setTimeout(() => saveBulkDraft(draft), 500)
+    return () => window.clearTimeout(timer)
+  }, [activeJob, draft, open, prefix, sourceMeasurement])
+  useEffect(() => {
+    if (!activeJob || !isUnfinishedBulkJob(activeJob.status)) return
+    if (!jobDraft.current) {
+      const stored = loadActiveBulkRun()
+      if (stored?.jobId === activeJob.id) jobDraft.current = stored.draft
+    }
+    let live = true
+    let timer:number | undefined
+    let failures = 0
+    const poll = async () => {
+      try {
+        const next = await bridge.bulkJob(activeJob.id)
+        if (!live) return
+        failures = 0
+        onJobChange(next)
+        const delay = nextPollDelay(next.status)
+        if (delay !== null) timer = window.setTimeout(() => void poll(), delay)
+      } catch (error) {
+        if (live) {
+          failures += 1
+          if (failures === 1) notifyRef.current(error instanceof Error ? error.message : '无法读取批量任务进度')
+          timer = window.setTimeout(() => void poll(), Math.min(5000, 1000 * 2 ** (failures - 1)))
+        }
+      }
+    }
+    timer = window.setTimeout(() => void poll(), nextPollDelay(activeJob.status) ?? 1000)
+    return () => { live = false; if (timer !== undefined) window.clearTimeout(timer) }
+  }, [activeJob, onJobChange])
+  useEffect(() => {
+    if (!activeJob || isUnfinishedBulkJob(activeJob.status) || recordedJobs.current.has(activeJob.id)) return
+    const stored = loadActiveBulkRun()
+    const completedDraft = jobDraft.current ?? (stored?.jobId === activeJob.id ? stored.draft : null)
+    if (!completedDraft) return
+    recordedJobs.current.add(activeJob.id)
+    const item = {
+      ...completedDraft,
+      jobId:activeJob.id,
+      status:activeJob.status,
+      completedAt:activeJob.updatedAt,
+      progress:{
+        completedPoints:activeJob.completedPoints, totalPoints:activeJob.totalPoints,
+        completedBatches:activeJob.completedBatches, totalBatches:activeJob.totalBatches,
+      },
+    }
+    appendBulkHistory(item)
+    setHistoryItems(loadBulkHistory())
+    clearActiveBulkRun(activeJob.id)
+    jobDraft.current = null
+    clearBulkDraft()
+    notifyRef.current(activeJob.status === 'succeeded' ? '批量造数已完成' : activeJob.status === 'cancelled' ? '批量造数已停止' : '批量造数任务失败')
+  }, [activeJob])
 
   if (!open) return null
 
@@ -225,12 +313,15 @@ export default function BulkDataWizard({ open, connection, database, tables, act
   }
   const updateTag = (name:string, generator:TagGenerator) => setTags(current => current.map(item => item.name === name ? { ...item, generator } : item))
   const changeTagMode = async (tag:BulkTagDraft, kind:typeof TAG_MODES[number]) => {
+    const requestId = (tagRequests.current.get(tag.name) ?? 0) + 1
+    tagRequests.current.set(tag.name, requestId)
     if (kind === 'list') return updateTag(tag.name, { kind, values:['value-01'] })
     if (kind === 'sequence') return updateTag(tag.name, { kind, prefix:`${tag.name}-`, start:1, count:2, padding:2 })
     updateTag(tag.name, { kind, values:[], truncated:false })
     try {
       const result = await bridge.tagValues(database, sourceMeasurement, tag.name)
-      updateTag(tag.name, { kind, values:result.values, truncated:result.truncated })
+      if (tagRequests.current.get(tag.name) !== requestId) return
+      setTags(current => current.map(item => item.name === tag.name && item.generator.kind === 'existing' ? { ...item, generator:{ kind, values:result.values, truncated:result.truncated } } : item))
     } catch (error) {
       onNotify(error instanceof Error ? error.message : `无法读取 Tag ${tag.name} 的已有值`)
     }
@@ -254,32 +345,87 @@ export default function BulkDataWizard({ open, connection, database, tables, act
   const previewPlan = async () => {
     if (!schema) return onNotify('Schema 尚未读取完成')
     if (truncatedTag) return onNotify(`Tag ${truncatedTag.name} 的已有值超过 1000 个，请改用候选列表或序列缩小范围`)
+    const controller = new AbortController()
     try {
       setPreviewing(true)
+      previewAbort.current?.abort()
+      previewAbort.current = controller
       const result = await bridge.previewBulkJob({
         ...draft,
         schema,
         tags:tags.map(tag => ({ name:tag.name, values:tagValues(tag) })),
         fields,
-      })
+      }, controller.signal)
+      if (previewAbort.current !== controller) return
       setPreview(result)
     } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return
       const bridgeError = error instanceof BridgeError ? error : null
       setStep(stepForBulkError(bridgeError?.code))
       onNotify(error instanceof Error ? error.message : '无法生成预览')
     } finally {
-      setPreviewing(false)
+      if (previewAbort.current === controller) setPreviewing(false)
     }
   }
-  const canContinue = step === 1 ? Boolean(prefix && sourceMeasurement && retentionPolicy && schema)
-    : step === 2 ? Boolean(estimate && dates.length && estimate.pointCount <= 100000 && estimate.maxNewSeries <= 10000)
-      : step === 3 ? Boolean(tags.length === (schema?.tags.length ?? -1) && fields.length === (schema?.fields.length ?? -1) && !truncatedTag && validGenerators)
-        : true
+  const applyDraft = (next:BulkDraft) => {
+    setPrefix(next.prefix)
+    setSourceMeasurement(next.sourceMeasurement)
+    setRetentionPolicy(next.retentionPolicy)
+    setDates(next.dates)
+    setStartTime(next.startTime)
+    setEndTime(next.endTime)
+    setIntervalSeconds(next.intervalSeconds)
+    setTags(next.tags)
+    setFields(next.fields)
+    setConstraints(next.constraints)
+    setStep(1)
+    setResumeDraft(null)
+  }
+  const executePlan = async () => {
+    if (!preview) return
+    try {
+      setJobBusy(true)
+      const job = await bridge.createBulkJob({
+        previewId:preview.previewId,
+        database,
+        acknowledgeCreate:hasPending ? ackCreate : undefined,
+        acknowledgeOverwrite:hasExisting ? ackOverwrite : undefined,
+      })
+      jobDraft.current = draft
+      saveActiveBulkRun(job.id, draft)
+      onJobChange(job)
+      clearBulkDraft()
+    } catch (error) {
+      const bridgeError = error instanceof BridgeError ? error : null
+      if (bridgeError?.code === 'STALE_BULK_PREVIEW' || bridgeError?.code === 'BULK_PREVIEW_REQUIRED') setPreview(null)
+      onNotify(error instanceof Error ? error.message : '无法启动批量任务')
+    } finally {
+      setJobBusy(false)
+    }
+  }
+  const resumeJob = async () => {
+    if (!activeJob) return
+    try { setJobBusy(true); onJobChange(await bridge.resumeBulkJob(activeJob.id)) }
+    catch (error) { onNotify(error instanceof Error ? error.message : '无法继续批量任务') }
+    finally { setJobBusy(false) }
+  }
+  const cancelJob = async () => {
+    if (!activeJob) return
+    try { setJobBusy(true); setStopConfirm(false); onJobChange(await bridge.cancelBulkJob(activeJob.id)) }
+    catch (error) { onNotify(error instanceof Error ? error.message : '无法停止批量任务') }
+    finally { setJobBusy(false) }
+  }
+  const targetReady = Boolean(prefix && sourceMeasurement && retentionPolicy && schema)
+  const timeReady = Boolean(estimate && dates.length && estimate.pointCount <= 100000 && estimate.maxNewSeries <= 10000)
+  const generatorsReady = Boolean(tags.length === (schema?.tags.length ?? -1) && fields.length === (schema?.fields.length ?? -1) && !truncatedTag && validGenerators)
+  const canContinue = step === 1 ? targetReady : step === 2 ? timeReady : step === 3 ? generatorsReady : targetReady && timeReady && generatorsReady
+  const jobPercent = activeJob?.totalPoints ? Math.min(100, Math.round(activeJob.completedPoints / activeJob.totalPoints * 100)) : 0
 
   return <div className="bulk-modal" role="presentation"><section ref={dialogRef} tabIndex={-1} className="bulk-wizard" role="dialog" aria-modal="true" aria-label="批量造数">
-    <aside className="bulk-steps"><div><h2>批量造数</h2><p>先配置计划，再确认写入</p>{STEPS.map((label, index) => <button key={label} type="button" aria-current={step === index + 1 ? 'step' : undefined} className={step === index + 1 ? 'active' : step > index + 1 ? 'done' : ''} onClick={() => setStep(index + 1)}><span>{step > index + 1 ? '✓' : index + 1}</span>{label}</button>)}</div><div className="bulk-recent"><b>最近任务</b><p>{activeJob ? `${activeJob.status} · ${activeJob.completedPoints}/${activeJob.totalPoints}` : '暂无进行中的任务'}</p></div></aside>
-    <div className="bulk-content"><header className="bulk-header"><div><h1>{STEPS[step - 1]}</h1><p>{['选择目标天表前缀、Schema 来源和保留策略', '统一使用北京日期，最多生成 7 天的数据', '配置每个 Tag、Field 的生成方式，并添加 AND 约束', '检查样本与风险；修改配置后必须重新预览'][step - 1]}</p></div><button className="bulk-close" type="button" onClick={onClose} aria-label="关闭批量造数">×</button></header>
+    <aside className="bulk-steps"><div><h2>批量造数</h2><p>先配置计划，再确认写入</p>{STEPS.map((label, index) => <button key={label} type="button" aria-current={step === index + 1 ? 'step' : undefined} className={step === index + 1 ? 'active' : step > index + 1 ? 'done' : ''} onClick={() => setStep(index + 1)}><span>{step > index + 1 ? '✓' : index + 1}</span>{label}</button>)}</div><div className="bulk-history"><b>最近任务</b>{activeJob && <button type="button" className="bulk-active-summary" onClick={() => setStep(4)}><span>{activeJob.status}</span><strong>{jobPercent}%</strong></button>}{historyItems.slice(0, 20).map(item => <button type="button" key={item.jobId} title="复制为新任务" onClick={() => applyDraft(copyHistoryToDraft(item))}><span>{item.prefix} · {item.dates.length} 天</span><small>{item.status} · 复制</small></button>)}{!activeJob && historyItems.length === 0 && <p>暂无历史任务</p>}</div></aside>
+    <div className="bulk-content"><header className="bulk-header"><div><h1>{STEPS[step - 1]}</h1><p>{['选择目标天表前缀、Schema 来源和保留策略', '统一使用北京日期，最多生成 7 天的数据', '配置每个 Tag、Field 的生成方式，并添加 AND 约束', '检查样本与风险；修改配置后必须重新预览'][step - 1]}</p></div><button className="bulk-close" type="button" onClick={onClose} aria-label={activeJob && isUnfinishedBulkJob(activeJob.status) ? '最小化批量造数' : '关闭批量造数'} title={activeJob && isUnfinishedBulkJob(activeJob.status) ? '任务会继续在 Bridge 中运行' : '关闭'}>{activeJob && isUnfinishedBulkJob(activeJob.status) ? '—' : '×'}</button></header>
       <div className="bulk-body">
+        {resumeDraft && <div className="bulk-resume-draft"><div><b>发现未完成的造数草稿</b><p>{resumeDraft.prefix} · {resumeDraft.dates.length} 天 · 保存的草稿会重新校验，不会沿用旧预览。</p></div><button type="button" onClick={() => { clearBulkDraft(); setResumeDraft(null) }}>丢弃</button><button type="button" className="primary" disabled={resumeDraft.database !== database} title={resumeDraft.database !== database ? `请先切换到 Database ${resumeDraft.database}` : ''} onClick={() => applyDraft(resumeDraft)}>继续配置</button></div>}
         {step === 1 && <div className="bulk-section"><div className="bulk-context"><span>连接</span><b>{connection.name}</b><span>Database</span><b>{database}</b></div><label>目标逻辑前缀<select value={prefix} onChange={event => setPrefix(event.target.value)}>{prefixes.map(item => <option key={item}>{item}</option>)}</select></label><label>Schema 来源（默认最新天表）<select value={sourceMeasurement} onChange={event => setSourceMeasurement(event.target.value)}>{siblings.map(item => <option key={item}>{item}</option>)}</select></label><label>保留策略 RP<select value={retentionPolicy} onChange={event => setRetentionPolicy(event.target.value)}>{policies.map(item => <option key={item.name} value={item.name}>{item.name}{item.isDefault ? '（默认）' : ''} · {duration(item.durationMs)}</option>)}</select></label><div className="bulk-note"><b>Schema 校验</b><p>{schema ? drift : '正在读取 Schema…'}</p></div></div>}
         {step === 2 && <div className="bulk-section"><div className="bulk-date-presets"><span>最近 N 天</span>{[1,2,3,4,5,6,7].map(count => <button key={count} type="button" onClick={() => recentDates(count)}>{count} 天</button>)}</div><label>指定日期（可多选，最多 7 天）<span className="bulk-inline"><input type="date" value={dateInput} onChange={event => setDateInput(event.target.value)}/><button type="button" onClick={addDate}>添加日期</button></span></label><div className="bulk-selected-dates">{dates.length ? dates.map(date => <button type="button" key={date} onClick={() => setDates(current => current.filter(item => item !== date))}>{date} ×</button>) : <span>尚未选择日期</span>}</div><div className="bulk-time-grid"><label>每日开始时间<input type="time" step="1" value={startTime} onChange={event => setStartTime(event.target.value)}/></label><label>每日结束时间<input type="time" step="1" value={endTime} onChange={event => setEndTime(event.target.value)}/></label><label>采样间隔<select value={PRESET_INTERVALS.some(([value]) => value === intervalSeconds) ? String(intervalSeconds) : 'custom'} onChange={event => setIntervalSeconds(event.target.value === 'custom' ? 2 : Number(event.target.value))}>{PRESET_INTERVALS.map(([value,label]) => <option key={value} value={value}>{`每 ${label}`}</option>)}<option value="custom">自定义秒数</option></select>{!PRESET_INTERVALS.some(([value]) => value === intervalSeconds) && <input type="number" min="1" max="86400" value={intervalSeconds} onChange={event => setIntervalSeconds(Number(event.target.value))} aria-label="自定义采样间隔秒数"/>}</label></div><div className="bulk-estimates"><div><small>日期</small><b>{dates.length}</b></div><div><small>预计点数</small><b>{estimate?.pointCount.toLocaleString() ?? '不可计算'}</b></div><div><small>最多新增时间线</small><b>{estimate?.maxNewSeries.toLocaleString() ?? '不可计算'}</b></div></div><div className="bulk-targets">{generatedRows.map(row => <div key={row.date}><span>{row.date}</span><code>{row.table}</code><b className={row.exists ? 'exists' : 'create'}>{row.exists ? '已存在' : '待创建'}</b></div>)}</div>{hasFuture && <div className="bulk-warning">包含未来日期；执行前需要额外确认。</div>}</div>}
         {step === 3 && <div className="bulk-config">
@@ -298,14 +444,22 @@ export default function BulkDataWizard({ open, connection, database, tables, act
           })}</section>
           <div className={validGenerators ? 'bulk-note' : 'bulk-warning'}><b>{validGenerators ? '当前估算' : '请完善生成参数'}</b><p>{validGenerators ? `预计生成 ${estimate?.pointCount.toLocaleString() ?? '不可计算'} 个点，最多新增 ${estimate?.maxNewSeries.toLocaleString() ?? '不可计算'} 条时间线。Bridge 会在预览时进行最终约束与上限校验。` : '候选值不能为空；数值范围、整数参数和布尔概率必须有效。'}</p></div>
         </div>}
-        {step === 4 && <div className="bulk-preview">
+        {step === 4 && activeJob && <div className="bulk-job-progress">
+          <div className="bulk-progress-title"><div><b>{activeJob.status === 'paused' ? '任务已暂停' : isUnfinishedBulkJob(activeJob.status) ? '正在写入 GeminiDB' : '任务已结束'}</b><p>{activeJob.currentMeasurement || '正在准备目标天表'}</p></div><strong>{jobPercent}%</strong></div>
+          <div className="bulk-progress-track"><span style={{ width:`${jobPercent}%` }}/></div>
+          <div className="bulk-progress-metrics"><div><small>已完成点数</small><b>{activeJob.completedPoints.toLocaleString()} / {activeJob.totalPoints.toLocaleString()}</b></div><div><small>批次</small><b>{activeJob.completedBatches} / {activeJob.totalBatches}</b></div><div><small>重试</small><b>{activeJob.retryCount}</b></div><div><small>状态</small><b>{activeJob.status}</b></div></div>
+          {activeJob.lastError && <div className="bulk-warning"><b>{activeJob.lastError.code}</b><p>{activeJob.lastError.message}</p></div>}
+          <div className="bulk-job-actions">{activeJob.status === 'paused' && <button type="button" className="primary" disabled={jobBusy} onClick={() => void resumeJob()}>从失败批次继续</button>}{isUnfinishedBulkJob(activeJob.status) && activeJob.status !== 'cancelling' && <button type="button" className="danger" disabled={jobBusy} onClick={() => setStopConfirm(true)}>停止任务</button>}{!isUnfinishedBulkJob(activeJob.status) && <button type="button" onClick={() => onJobChange(null)}>新建任务</button>}</div>
+        </div>}
+        {step === 4 && !activeJob && <div className="bulk-preview">
           <div className="bulk-summary"><div><small>目标 / RP</small><b>{prefix || '未选择'} · {retentionPolicy || '未选择'}</b></div><div><small>日期 / 天表</small><b>{dates.length} 天 · {hasExisting ? '含已存在' : ''}{hasExisting && hasPending ? ' / ' : ''}{hasPending ? '含待创建' : ''}</b></div><div><small>点数</small><b>{preview?.pointCount.toLocaleString() ?? estimate?.pointCount.toLocaleString() ?? '不可计算'}</b></div><div><small>最多新增时间线</small><b>{preview?.maxNewSeries.toLocaleString() ?? estimate?.maxNewSeries.toLocaleString() ?? '不可计算'}</b></div></div>
           <section className="bulk-preview-card"><header><b>配置摘要</b></header><p><b>Tag：</b>{tags.map(tag => `${tag.name}（${generatorLabel(tag.generator.kind)}，${tagValues(tag).length} 值）`).join('；') || '无'}</p><p><b>Field：</b>{fields.map(field => `${field.name}:${field.type}（${generatorLabel(field.generator.kind)}）`).join('；') || '无'}</p><p><b>约束：</b>{constraints.map(item => `${item.left} ${OPERATOR_LABELS[item.operator]} ${item.right.kind === 'field' ? item.right.field : String(item.right.value)}`).join(' AND ') || '无'}</p></section>
           {!preview && <div className="bulk-preview-empty"><b>尚未生成权威预览</b><p>Bridge 将重新校验 RP、Schema、点数、时间线和字段约束，并生成固定种子的 20 条样本。</p><button type="button" className="primary" disabled={previewing || !canContinue} onClick={() => void previewPlan()}>{previewing ? '正在生成…' : '生成预览'}</button></div>}
           {preview && <><section className="bulk-preview-card"><header><b>样本数据（{preview.samples.length} 条）</b><button type="button" onClick={() => setShowProtocol(value => !value)}>{showProtocol ? '隐藏 Line Protocol' : '查看 Line Protocol'}</button></header><div className="bulk-sample-table"><table><thead><tr><th>#</th><th>确定性写入样本</th></tr></thead><tbody>{preview.samples.map(sample => <tr key={sample.index}><td>{sample.index + 1}</td><td><code>{sample.lineProtocol}</code></td></tr>)}</tbody></table></div>{showProtocol && <pre>{preview.samples.map(sample => sample.lineProtocol).join('\n')}</pre>}</section>{preview.warnings.length > 0 && <div className="bulk-warning"><b>预览提醒</b>{preview.warnings.map((warning, index) => <p key={`${warning.code}-${index}`}>{warning.message}</p>)}</div>}<section className="bulk-confirmations"><b>执行前确认</b><label>输入逻辑前缀 <code>{prefix}</code><input value={confirmPrefix} onChange={event => setConfirmPrefix(event.target.value)} placeholder={prefix}/></label>{hasPending && <label><input type="checkbox" checked={ackCreate} onChange={event => setAckCreate(event.target.checked)}/>确认首次写入会自动创建“待创建”的天表</label>}{hasExisting && <label><input type="checkbox" checked={ackOverwrite} onChange={event => setAckOverwrite(event.target.checked)}/>确认相同时间戳与 Tag 组合可能覆盖已有 Field</label>}{hasFuture && <label><input type="checkbox" checked={ackFuture} onChange={event => setAckFuture(event.target.checked)}/>确认向未来日期写入测试数据</label>}<p>执行按钮将在下一阶段接入任务进度；当前确认状态不会绕过 Bridge 校验。</p></section></>}
         </div>}
       </div>
-      <footer className="bulk-footer"><span>步骤 {step} / 4</span><div>{step > 1 && <button type="button" onClick={() => setStep(value => value - 1)}>上一步</button>}{step < 4 && <button type="button" className="primary" disabled={!canContinue} onClick={() => setStep(value => value + 1)}>下一步</button>}{step === 4 && preview && <button type="button" className="primary" disabled={confirmPrefix !== prefix || (hasPending && !ackCreate) || (hasExisting && !ackOverwrite) || (hasFuture && !ackFuture)} onClick={() => onJobChange(activeJob)}>执行写入（下一阶段）</button>}</div></footer>
+      <footer className="bulk-footer"><span>{activeJob && step === 4 ? `任务 ${activeJob.id.slice(0, 8)}` : `步骤 ${step} / 4`}</span><div>{step > 1 && !activeJob && <button type="button" onClick={() => setStep(value => value - 1)}>上一步</button>}{step < 4 && <button type="button" className="primary" disabled={!canContinue} onClick={() => setStep(value => value + 1)}>下一步</button>}{step === 4 && preview && !activeJob && <button type="button" className="primary" disabled={jobBusy || confirmPrefix !== prefix || (hasPending && !ackCreate) || (hasExisting && !ackOverwrite) || (hasFuture && !ackFuture)} onClick={() => void executePlan()}>{jobBusy ? '正在启动…' : '确认并执行'}</button>}</div></footer>
     </div>
+    {stopConfirm && <div className="bulk-confirm-modal" role="alertdialog" aria-modal="true" aria-label="停止批量造数任务"><div><h3>停止当前任务？</h3><p>已写入的数据不会回滚；停止请求会取消尚未完成的批次。</p><footer><button type="button" onClick={() => setStopConfirm(false)}>继续运行</button><button type="button" className="danger" disabled={jobBusy} onClick={() => void cancelJob()}>确认停止</button></footer></div></div>}
   </section></div>
 }
