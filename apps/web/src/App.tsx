@@ -1,8 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { bridge } from './api'
+import { bridge, BridgeError } from './api'
 import { load, save } from './storage'
 import { deleteCredential, loadCredential, saveCredential } from './credentials'
-import { filterDayTables, multiTableQuery, type DayRange } from './day-tables'
+import { dayTablePrefix, filterDayTables, multiTableQuery, type DayRange } from './day-tables'
 import ResultsTable from './ResultsTable'
 import { inspectInfluxQL, lineDiff, localFix } from './diagnostics'
 import { beginSession, clearWorkspace, endSession, readWorkspace, writeWorkspace } from './workspace'
@@ -16,8 +16,10 @@ import { NEW_INFLUX_CONNECTION, removeMockConnections } from './connections'
 import { nextTheme, resolveTheme, THEME_LABEL, type ThemePreference } from './theme'
 import FeatureTour from './FeatureTour'
 import SchemaDialog from './SchemaDialog'
+import BulkDataWizard from './BulkDataWizard'
 import { initialTourStatus, TOUR_STEPS, TOUR_STORAGE_KEY, type TourStatus } from './onboarding'
-import type { ClaudeDiagnosis, ClaudeSettings, Connection, Execution, Favorite, MeasurementSchema, QueryRow } from './types'
+import { bulkEntryState } from './bulk-data'
+import type { BulkJobStatus, ClaudeDiagnosis, ClaudeSettings, Connection, Execution, Favorite, MeasurementSchema, QueryRow } from './types'
 const QueryEditor = lazy(() => import('./QueryEditor'))
 
 const DEFAULT_SQL = 'SHOW DATABASES'
@@ -31,7 +33,7 @@ const UNCLEAN_SESSION = beginSession()
 function fitSidebarWidth(value:number){return clampSidebarWidth(Math.min(value,window.innerWidth-640))}
 function loadActiveConnection(){const id=load<string>('gdb.activeConnection','');return id==='mock'?'':id}
 
-function splitTable(name: string) { const match = name.match(/^(.*)_(\d{10})$/); return match ? { prefix: match[1], timestamp: Number(match[2]) } : { prefix: name, timestamp: null } }
+function splitTable(name: string) { const match = name.match(/_(\d{10})$/); return { prefix: dayTablePrefix(name) || name, timestamp: match ? Number(match[1]) : null } }
 function day(timestamp: number | null) { return timestamp ? new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', dateStyle: 'medium' }).format(new Date(timestamp * 1000)) : '常驻表' }
 function formatTime(value: number) { return new Date(value).toLocaleString('zh-CN') }
 function download(name: string, type: string, content: string) { const url = URL.createObjectURL(new Blob([content], { type })); const link = document.createElement('a'); link.href = url; link.download = name; link.hidden = true; document.body.append(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000) }
@@ -73,6 +75,8 @@ export default function App() {
   const [connectionDialog, setConnectionDialog] = useState<Connection | null>(null)
   const [favoriteDialog, setFavoriteDialog] = useState(false)
   const [timeDialog, setTimeDialog] = useState(false)
+  const [bulkWizardOpen, setBulkWizardOpen] = useState(false)
+  const [activeBulkJob, setActiveBulkJob] = useState<BulkJobStatus | null>(null)
   const [schemaDialog,setSchemaDialog]=useState<{measurement:string;schema:MeasurementSchema}|null>(null)
   const [themePreference,setThemePreference]=useState<ThemePreference>(()=>load('gdb.theme','system'))
   const [systemDark,setSystemDark]=useState(()=>window.matchMedia('(prefers-color-scheme: dark)').matches)
@@ -91,6 +95,7 @@ export default function App() {
   const diagnosticAbort=useRef<AbortController|null>(null),diagnosticRequest=useRef(0)
 
   const currentConnection = connections.find(c => c.id === activeConnection) || connections[0]
+  const bulkEntry = bulkEntryState({ connection:currentConnection, connected:status.includes('已连接'), database })
   const activeQueryTab = queryTabs.find(tab => tab.id === activeTabId) || queryTabs[0]
   const sql = activeQueryTab?.sql || ''
   const filteredTables = useMemo(() => filterDayTables(tables,dayRange).filter(t => t.toLowerCase().includes(filter.toLowerCase())), [tables, filter, dayRange])
@@ -127,7 +132,7 @@ export default function App() {
     setStatus('正在登录…')
     try {
       const transport=connectionForTransport(connection)
-      await bridge.login({ mode: transport.mode, endpoint: transport.endpoint, username: transport.username, password: transport.password || await loadCredential(transport.id) || '', insecureSkipVerify: transport.insecureSkipVerify, readOnly: transport.readOnly })
+      await bridge.login({ mode: transport.mode, endpoint: transport.endpoint, username: transport.username, password: transport.password || await loadCredential(transport.id) || '', insecureSkipVerify: transport.insecureSkipVerify, readOnly: transport.readOnly, environment: connection.environment ?? 'dev' })
       const list = await bridge.databases()
       const nextDb = list.includes(database) ? database : list[0]
       const nextTables=await bridge.tables(nextDb),restoredTable=nextDb===database&&nextTables.includes(selectedTable)?selectedTable:''
@@ -281,7 +286,7 @@ export default function App() {
     {bridgeStatus&&!bridgeStatus.running&&<div className="bridge-alert" role="alert"><span><b>GeminiDB Bridge 启动失败</b><small>{bridgeStatus.error||'后台服务不可用，客户端仍可打开。'}{bridgeStatus.logPath&&<> · 日志：{bridgeStatus.logPath}</>}</small></span><button disabled={bridgeRetrying} onClick={()=>void retryBridge()}>{bridgeRetrying?'正在重试…':'重试 Bridge'}</button></div>}
     <header><div className="brand"><span className="brand-mark"/><b>GeminiDB Studio</b></div><div className="topbar">
       <div className="database-switcher" data-tour="database-switcher"><label><span>Database</span><select aria-label="当前 Database" title="切换当前 Database，无需执行 USE 命令" value={database} onChange={e => void changeDatabase(e.target.value)} disabled={!databases.length}>{databases.map(db => <option key={db}>{db}</option>)}</select></label>{databaseHintOpen&&!tourOpen&&tourStatus!=='new'&&databases.length>1&&<div className="database-coachmark" role="status"><b>切换 Database</b><p>可直接在这里选择，无需执行 <code>USE database_xxx</code>。</p><button onClick={dismissDatabaseHint}>知道了</button></div>}</div>
-      <button className="utility-button time-tool" data-tour="time-converter" onClick={() => setTimeDialog(true)} title="UTC、北京时间与 Unix 时间戳互相转换"><span>◷</span><b>时间转换</b></button><button className="icon-button tour-help" onClick={openTour} title="重新查看功能导览" aria-label="重新查看功能导览">?</button><button className="utility-button theme-tool" onClick={cycleTheme} title={`当前：${THEME_LABEL[themePreference]}；点击切换主题`}><span>{resolvedTheme==='dark'?'☾':'◐'}</span><b>{THEME_LABEL[themePreference]}</b></button><button className={`connection-state connection-control env-${currentConnection?.environment||'dev'} ${status.includes('失败') ? 'error' : ''}`} onClick={() => currentConnection && setConnectionDialog(currentConnection)} title="编辑当前连接"><i/>{status}<UiIcon name="settings"/></button>
+      <button className="bulk-entry" style={{ marginLeft:24 }} disabled={!bulkEntry.enabled} title={bulkEntry.reason || '批量生成测试数据'} onClick={() => { if (!bulkEntry.enabled) return; setBulkWizardOpen(true); void bridge.activeBulkJob().then(setActiveBulkJob).catch(error => { if (error instanceof BridgeError && error.code === 'BULK_JOB_NOT_FOUND') setActiveBulkJob(null); else toast(error instanceof Error ? error.message : '无法读取进行中的任务') }) }}>▦ 批量造数</button><button className="utility-button time-tool" data-tour="time-converter" onClick={() => setTimeDialog(true)} title="UTC、北京时间与 Unix 时间戳互相转换"><span>◷</span><b>时间转换</b></button><button className="icon-button tour-help" onClick={openTour} title="重新查看功能导览" aria-label="重新查看功能导览">?</button><button className="utility-button theme-tool" onClick={cycleTheme} title={`当前：${THEME_LABEL[themePreference]}；点击切换主题`}><span>{resolvedTheme==='dark'?'☾':'◐'}</span><b>{THEME_LABEL[themePreference]}</b></button><button className={`connection-state connection-control env-${currentConnection?.environment||'dev'} ${status.includes('失败') ? 'error' : ''}`} onClick={() => currentConnection && setConnectionDialog(currentConnection)} title="编辑当前连接"><i/>{status}<UiIcon name="settings"/></button>
     </div></header>
 
     <aside className="left-sidebar"><nav className="tool-rail" aria-label="工具窗口"><button className={sideOpen && sideTool === 'connections' ? 'active' : ''} onClick={() => switchTool('connections')} title="连接"><UiIcon name="connection"/></button><button data-tour="catalog" className={sideOpen && sideTool === 'catalog' ? 'active' : ''} onClick={() => switchTool('catalog')} title="数据目录"><UiIcon name="catalog"/></button></nav>
@@ -298,6 +303,7 @@ export default function App() {
     {favoriteDialog&&<FavoriteDialog database={database} sql={sql} onClose={()=>setFavoriteDialog(false)} onSave={confirmFavorite}/>}
     {recoveryOpen&&<div className="modal"><div className="dialog recovery-dialog"><h2>恢复查询工作区</h2><p>检测到上次未正常关闭。可以恢复查询页签和目录位置；不会自动执行 SQL。</p><div className="dialog-actions"><button onClick={discardWorkspace}>重新开始</button><button className="primary" onClick={restoreWorkspace}>恢复工作区</button></div></div></div>}
     {timeDialog && <TimeDialog onClose={() => setTimeDialog(false)}/>} 
+    {currentConnection && <BulkDataWizard open={bulkWizardOpen} connection={currentConnection} database={database} tables={tables} activeJob={activeBulkJob} onClose={() => setBulkWizardOpen(false)} onJobChange={setActiveBulkJob} onNotify={toast}/>}
     {schemaDialog&&<SchemaDialog database={database} measurement={schemaDialog.measurement} schema={schemaDialog.schema} loading={schemaLoading} onRefresh={refreshSchemaDialog} onClose={()=>setSchemaDialog(null)} onMessage={toast}/>}
     {claudeSettingsOpen&&<ClaudeSettingsDialog settings={claudeSettings} onClose={()=>setClaudeSettingsOpen(false)} onSave={(settings,key)=>{setClaudeSettings(settings);save('gdb.claude.settings',settings);if(key)void saveCredential('claude-api',key);setClaudeSettingsOpen(false);toast('诊断设置已保存')}}/>}
     {tourOpen&&<FeatureTour steps={TOUR_STEPS} onComplete={()=>finishTour('completed')} onSkip={()=>finishTour('skipped')}/>}
@@ -366,7 +372,7 @@ function ConnectionDialog({ connection, onClose, onSave, onDuplicate, onDelete }
     setTesting(true); setTestResult(''); setTestResultCopied(false)
     try {
       const savedPassword = draft.id ? await loadCredential(draft.id) : null
-      await bridge.login({...connectionForTransport(draft), password:draft.password || savedPassword || ''})
+      await bridge.login({...connectionForTransport(draft), password:draft.password || savedPassword || '', environment:draft.environment ?? 'dev'})
       const list = await bridge.databases()
       setTestResult(`连接成功 · 发现 ${list.length} 个 Database`)
     } catch (error) { setTestResult(error instanceof Error ? `连接失败：${error.message}` : '连接失败') }

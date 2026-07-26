@@ -19,6 +19,7 @@ import './feature-tour.css'
 import './schema-dialog.css'
 import './responsive-layout.css'
 import './theme.css'
+import './bulk-data.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode><App /></React.StrictMode>
