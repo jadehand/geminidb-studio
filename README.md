@@ -85,6 +85,35 @@ WRITE cpu,host=node-01 usage=37.82 1784649600000000000
 
 GeminiDB Influx 不支持传统 SQL `INSERT INTO ... VALUES ...`。Bridge 会返回迁移提示，不会把这类语句发送到云端。
 
+## 批量造数（0.5.0）
+
+批量造数用于向 GeminiDB Influx 的测试实例生成可控的时序测试数据。先在“管理连接”中把连接环境设为“测试环境”，并确保连接不是只读模式；生产、开发或只读连接不会开放入口。
+
+向导按四步完成配置：
+
+1. 选择 Database、Retention Policy、Measurement 前缀和基准 Schema。
+2. 通过日历选择最多 7 个日期，并设置每日时间范围与采样间隔。
+3. 为 Tag 和 Field 选择生成方式，按需增加字段间或字段与固定值之间的约束。
+4. 检查目标天表、点数、序列数、样本表和 Line Protocol，完成风险确认后执行。
+
+“待创建”表示目标日期对应的天表当前不存在。执行时不单独发送建表语句：GeminiDB Influx 会在首批 Line Protocol 写入时按 Measurement 名称建立目标。选择已有目标时，写入相同时间戳、Tag 组合和 Field 可能覆盖已有 Field 值，因此必须额外确认。Retention Policy 会随每个写入请求传给 GeminiDB；请在预览页再次核对。
+
+硬限制与执行语义：
+
+- 单次最多选择 7 天、生成 100,000 个点和 10,000 个序列。
+- 最小采样间隔为 1 秒；写入按 1,000 行分批，每个日期最多同时发送 2 批。
+- 任务失败后可从失败批次继续，取消仅阻止后续批次；已成功写入的数据不会回滚。
+- 草稿和最近 20 条历史保存在本地。应用或 Bridge 重启后只显示历史，不支持恢复尚未完成的任务。
+- 运行中关闭桌面客户端会先显示确认框；停止后退出会尽量在 3 秒内结束，但已写入数据仍会保留。
+
+Bridge 新增以下接口：
+
+- `POST /bulk-jobs/preview`：校验计划并生成确定性预览。
+- `POST /bulk-jobs`：创建并执行任务。
+- `GET /bulk-jobs/active`、`GET /bulk-jobs/:id`：读取当前或指定任务状态。
+- `POST /bulk-jobs/:id/resume`：从失败批次继续。
+- `POST /bulk-jobs/:id/cancel`：取消后续写入。
+
 ## 当前能力
 
 - 常用连接与自动登录
@@ -92,6 +121,7 @@ GeminiDB Influx 不支持传统 SQL `INSERT INTO ... VALUES ...`。Bridge 会返
 - database、measurements 和 measurement 前缀三级目录均可展开/收起
 - Monaco InfluxQL 编辑器：语法高亮、关键字/函数/measurement 补全和常见 MySQL 语法提醒
 - 选择 measurement 后自动读取 Field Key、字段类型和 Tag Key，并加入编辑器补全
+- 测试环境批量造数：多日期、Tag/Field 生成器、约束、预览、后台任务和历史
 - 多查询页签与草稿自动保存；双击页签重命名，`Ctrl/Cmd + Enter` 执行选区或全文
 - InfluxQL 查询与 line protocol 写入
 - 结果表、CSV/JSON 导出
@@ -114,4 +144,4 @@ GeminiDB Influx 不支持传统 SQL `INSERT INTO ... VALUES ...`。Bridge 会返
 
 ## 生产化入口
 
-Bridge API 保持 `/login`、`/databases`、`/tables`、`/schema`、`/query`、`/ask`。`/schema` 使用 `SHOW FIELD KEYS` 和 `SHOW TAG KEYS` 读取当前 measurement 结构；真实 Influx HTTP 适配器位于 `apps/bridge/influx-client.mjs`。
+Bridge API 保持 `/login`、`/databases`、`/tables`、`/schema`、`/query`、`/ask`，并提供 `/retention-policies`、`/tag-values` 和 `/bulk-jobs/*` 批量造数接口。`/schema` 使用 `SHOW FIELD KEYS` 和 `SHOW TAG KEYS` 读取当前 measurement 结构；真实 Influx HTTP 适配器位于 `apps/bridge/influx-client.mjs`。
