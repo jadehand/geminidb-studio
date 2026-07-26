@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import test from 'node:test'
-import { getMeasurementSchema, influxQuery, influxWrite, listDatabases, listMeasurements, normalizeEndpoint } from './influx-client.mjs'
+import { closeInfluxAgents, getMeasurementSchema, InfluxHttpError, influxQuery, influxWrite, listDatabases, listMeasurements, listRetentionPolicies, listTagValues, normalizeEndpoint } from './influx-client.mjs'
 
 async function fixture() {
   const requests = []
@@ -12,10 +12,17 @@ async function fixture() {
     request.on('end', () => {
       requests.push({ method: request.method, url, authorization: request.headers.authorization, body: Buffer.concat(chunks).toString('utf8') })
       response.setHeader('Content-Type', 'application/json')
-      if (url.pathname === '/write') { response.statusCode = 204; return response.end() }
+      if (url.pathname === '/write') {
+        if (url.searchParams.get('db') === 'too-many') { response.statusCode = 429; return response.end(JSON.stringify({ error: 'rate limited' })) }
+        if (url.searchParams.get('db') === 'bad-write') { response.statusCode = 400; return response.end(JSON.stringify({ error: 'bad request' })) }
+        if (url.searchParams.get('db') === 'slow-write') return
+        response.statusCode = 204; return response.end()
+      }
       const query = url.searchParams.get('q')
       if (query === 'SHOW DATABASES') return response.end(JSON.stringify({ results: [{ series: [{ name: 'databases', columns: ['name'], values: [['_internal'], ['monitoring']] }] }] }))
       if (query === 'SHOW MEASUREMENTS') return response.end(JSON.stringify({ results: [{ series: [{ name: 'measurements', columns: ['name'], values: [['cpu_1784563200'], ['cpu_1784649600']] }] }] }))
+      if (query === 'SHOW RETENTION POLICIES ON "monitoring"') return response.end(JSON.stringify({ results: [{ series: [{ name: 'retention_policies', columns: ['name', 'duration', 'default'], values: [['autogen', '168h0m0s', true]] }] }] }))
+      if (query === 'SHOW TAG VALUES FROM "cpu_1784995200" WITH KEY = "host" LIMIT 1001') return response.end(JSON.stringify({ results: [{ series: [{ name: 'cpu_1784995200', columns: ['key', 'value'], values: [['host', 'node-01'], ['host', 'node-02']] }] }] }))
       if (query?.startsWith('SHOW FIELD KEYS')) return response.end(JSON.stringify({ results: [{ series: [{ name: 'cpu', columns: ['fieldKey', 'fieldType'], values: [['value', 'float'], ['status', 'string']] }] }] }))
       if (query?.startsWith('SHOW TAG KEYS')) return response.end(JSON.stringify({ results: [{ series: [{ name: 'cpu', columns: ['tagKey'], values: [['host'], ['region']] }] }] }))
       response.end(JSON.stringify({ results: [{ series: [{ name: 'cpu', columns: ['time', 'host', 'value'], values: [[1784649600000, 'node-01', 37.82]] }] }] }))
@@ -57,3 +64,33 @@ test('HTTPS 连接到 HTTP 服务时给出协议切换提示', async t => {
     /目标服务不是 HTTPS.*切换为 HTTP/
   )
 })
+
+test('bulk generation reads retention policies and tag values', async t => {
+  const upstream = await fixture()
+  t.after(() => upstream.server.close())
+  const config = { endpoint: upstream.endpoint, username: 'rwuser', password: 'secret', timeoutMs: 2000, insecureSkipVerify: false }
+  assert.deepEqual(await listRetentionPolicies(config, 'monitoring'), [{ name:'autogen', durationMs:604800000, isDefault:true }])
+  assert.deepEqual(await listTagValues(config, 'monitoring', 'cpu_1784995200', 'host', 1000), { values:['node-01', 'node-02'], truncated:false })
+})
+
+test('bulk writes use RP and milliseconds with typed HTTP errors', async t => {
+  const upstream = await fixture()
+  t.after(() => upstream.server.close())
+  const config = { endpoint: upstream.endpoint, username: 'rwuser', password: 'secret', timeoutMs: 2000, insecureSkipVerify: false }
+  await influxWrite(config, 'monitoring', 'cpu value=1 1', { precision:'ms', retentionPolicy:'autogen' })
+  assert.equal(upstream.requests.at(-1).url.search, '?db=monitoring&rp=autogen&precision=ms')
+  await assert.rejects(influxWrite(config, 'too-many', 'cpu value=1 1'), error => error instanceof InfluxHttpError && error.statusCode === 429 && error.retryable === true)
+  await assert.rejects(influxWrite(config, 'bad-write', 'cpu value=1 1'), error => error instanceof InfluxHttpError && error.statusCode === 400 && error.retryable === false)
+})
+
+test('an aborted bulk write destroys its request', async t => {
+  const upstream = await fixture()
+  t.after(() => upstream.server.close())
+  const config = { endpoint: upstream.endpoint, username: 'rwuser', password: 'secret', timeoutMs: 2000, insecureSkipVerify: false }
+  const controller = new AbortController()
+  const write = influxWrite(config, 'slow-write', 'cpu value=1 1', { signal:controller.signal })
+  controller.abort()
+  await assert.rejects(write, /abort|aborted/i)
+})
+
+test.after(() => closeInfluxAgents())
