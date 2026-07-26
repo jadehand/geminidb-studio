@@ -155,6 +155,24 @@ function topologicalOrder(fields, dependencies) {
   return ordered
 }
 
+function tightenLower(domain, value, inclusive) {
+  if (value > domain.lower) {
+    domain.lower = value
+    domain.lowerInclusive = inclusive
+  } else if (value === domain.lower) {
+    domain.lowerInclusive = domain.lowerInclusive && inclusive
+  }
+}
+
+function tightenUpper(domain, value, inclusive) {
+  if (value < domain.upper) {
+    domain.upper = value
+    domain.upperInclusive = inclusive
+  } else if (value === domain.upper) {
+    domain.upperInclusive = domain.upperInclusive && inclusive
+  }
+}
+
 function constraintsForDomain(field, rightValues, constraints) {
   const numeric = field.type === 'float' || field.type === 'integer'
   const domain = numeric
@@ -165,30 +183,16 @@ function constraintsForDomain(field, rightValues, constraints) {
     if (right === undefined) throw constraintError(`constraint dependency ${constraint.right.field} was not generated`)
     if (numeric) {
       if (constraint.operator === '>') {
-        if (right > domain.lower || (right === domain.lower && domain.lowerInclusive)) {
-          domain.lower = right
-          domain.lowerInclusive = false
-        }
+        tightenLower(domain, right, false)
       } else if (constraint.operator === '>=') {
-        if (right > domain.lower || (right === domain.lower && !domain.lowerInclusive)) {
-          domain.lower = right
-          domain.lowerInclusive = true
-        }
+        tightenLower(domain, right, true)
       } else if (constraint.operator === '<') {
-        if (right < domain.upper || (right === domain.upper && domain.upperInclusive)) {
-          domain.upper = right
-          domain.upperInclusive = false
-        }
+        tightenUpper(domain, right, false)
       } else if (constraint.operator === '<=') {
-        if (right < domain.upper || (right === domain.upper && !domain.upperInclusive)) {
-          domain.upper = right
-          domain.upperInclusive = true
-        }
+        tightenUpper(domain, right, true)
       } else if (constraint.operator === '=') {
-        domain.lower = right
-        domain.lowerInclusive = true
-        domain.upper = right
-        domain.upperInclusive = true
+        tightenLower(domain, right, true)
+        tightenUpper(domain, right, true)
       } else {
         domain.excluded.add(right)
       }
@@ -216,13 +220,16 @@ function numberBounds(field, domain, index) {
     if (!isFiniteNumber(fixed) || (field.type === 'integer' && !Number.isSafeInteger(fixed))) throw constraintError(`${field.name} increment overflows its type`, 'CONSTRAINT_UNSATISFIABLE')
     return { fixed, min: fixed, max: fixed }
   }
+  const lowerInclusive = min > domain.lower ? true : domain.lowerInclusive
+  const upperInclusive = max < domain.upper ? true : domain.upperInclusive
   min = Math.max(min, domain.lower)
   max = Math.min(max, domain.upper)
   if (field.type === 'integer') {
-    min = domain.lowerInclusive ? Math.ceil(min) : Math.floor(min) + 1
-    max = domain.upperInclusive ? Math.floor(max) : Math.ceil(max) - 1
+    min = lowerInclusive ? Math.ceil(min) : Math.floor(min) + 1
+    max = upperInclusive ? Math.floor(max) : Math.ceil(max) - 1
+    return { min, max, lowerInclusive: true, upperInclusive: true }
   }
-  return { min, max }
+  return { min, max, lowerInclusive, upperInclusive }
 }
 
 function chooseInteger(min, max, excluded, random) {
@@ -235,28 +242,62 @@ function chooseInteger(min, max, excluded, random) {
   return min + offset
 }
 
-function chooseFloat(min, max, excluded, random) {
+function nextUp(value) {
+  if (!isFiniteNumber(value) || value === Infinity) return value
+  if (Object.is(value, -0) || value === 0) return Number.MIN_VALUE
+  const buffer = new ArrayBuffer(8)
+  const view = new DataView(buffer)
+  view.setFloat64(0, value)
+  const bits = view.getBigUint64(0)
+  view.setBigUint64(0, value > 0 ? bits + 1n : bits - 1n)
+  return view.getFloat64(0)
+}
+
+function nextDown(value) {
+  if (!isFiniteNumber(value) || value === -Infinity) return value
+  if (Object.is(value, -0) || value === 0) return -Number.MIN_VALUE
+  const buffer = new ArrayBuffer(8)
+  const view = new DataView(buffer)
+  view.setFloat64(0, value)
+  const bits = view.getBigUint64(0)
+  view.setBigUint64(0, value > 0 ? bits - 1n : bits + 1n)
+  return view.getFloat64(0)
+}
+
+function chooseFloat(min, max, lowerInclusive, upperInclusive, excluded, random) {
   if (min > max || !isFiniteNumber(min) || !isFiniteNumber(max)) return undefined
-  if (min === max) return excluded.has(min) ? undefined : min
-  let value = min + (0.125 + random() * 0.75) * (max - min)
-  if (excluded.has(value)) value = min + 0.5 * (max - min)
-  return excluded.has(value) ? undefined : value
+  const first = lowerInclusive ? min : nextUp(min)
+  const last = upperInclusive ? max : nextDown(max)
+  if (first > last) return undefined
+  if (first === last) return excluded.has(first) ? undefined : first
+  let value = first + random() * (last - first)
+  if (value > last) value = last
+  if (!excluded.has(value)) return value
+  for (const candidate of [first, last, nextUp(first), nextDown(last)]) {
+    if (candidate >= first && candidate <= last && !excluded.has(candidate)) return candidate
+  }
+  return undefined
+}
+
+function satisfiesNumericDomain(value, domain) {
+  return value >= domain.lower && value <= domain.upper &&
+    !(value === domain.lower && !domain.lowerInclusive) &&
+    !(value === domain.upper && !domain.upperInclusive) &&
+    !domain.excluded.has(value)
 }
 
 function generateNumeric(field, domain, random, index) {
   const bounds = numberBounds(field, domain, index)
   if (bounds.fixed !== undefined) {
-    if (bounds.fixed < domain.lower || bounds.fixed > domain.upper ||
-      (bounds.fixed === domain.lower && !domain.lowerInclusive) ||
-      (bounds.fixed === domain.upper && !domain.upperInclusive) || domain.excluded.has(bounds.fixed)) {
+    if (!satisfiesNumericDomain(bounds.fixed, domain)) {
       throw constraintError(`${field.name} has no feasible value`, 'CONSTRAINT_UNSATISFIABLE')
     }
     return bounds.fixed
   }
   const value = field.type === 'integer'
     ? chooseInteger(bounds.min, bounds.max, domain.excluded, random)
-    : chooseFloat(bounds.min, bounds.max, domain.excluded, random)
-  if (value === undefined) throw constraintError(`${field.name} has no feasible value`, 'CONSTRAINT_UNSATISFIABLE')
+    : chooseFloat(bounds.min, bounds.max, bounds.lowerInclusive, bounds.upperInclusive, domain.excluded, random)
+  if (value === undefined || !satisfiesNumericDomain(value, domain)) throw constraintError(`${field.name} has no feasible value`, 'CONSTRAINT_UNSATISFIABLE')
   return value
 }
 
@@ -278,6 +319,9 @@ function generateDiscrete(field, domain, random, index) {
   if (domain.equality !== undefined) candidates = candidates.filter(value => value === domain.equality)
   candidates = candidates.filter(value => !domain.excluded.has(value))
   if (candidates.length === 0) throw constraintError(`${field.name} has no feasible value`, 'CONSTRAINT_UNSATISFIABLE')
+  if (field.kind === 'random-boolean' && candidates.length === 2 && domain.equality === undefined && domain.excluded.size === 0) {
+    return random() < field.truePercent / 100
+  }
   if (field.kind === 'fixed' || field.kind === 'increment' || candidates.length === 1) return candidates[0]
   return candidates[Math.floor(random() * candidates.length)]
 }
@@ -297,7 +341,7 @@ function validateStaticFeasibility(order, fieldsByName, byLeft) {
         ? bounds.fixed
         : field.type === 'integer'
           ? chooseInteger(bounds.min, bounds.max, domain.excluded, () => 0)
-          : chooseFloat(bounds.min, bounds.max, domain.excluded, () => 0)
+          : chooseFloat(bounds.min, bounds.max, bounds.lowerInclusive, bounds.upperInclusive, domain.excluded, () => 0)
       if (candidate === undefined || candidate < domain.lower || candidate > domain.upper ||
         (candidate === domain.lower && !domain.lowerInclusive) ||
         (candidate === domain.upper && !domain.upperInclusive) || domain.excluded.has(candidate)) {
@@ -361,11 +405,18 @@ export function compileConstraints(fields, constraints = []) {
   }
 }
 
-function escapeIdentifier(value) {
+function rejectLineBreaks(value, label) {
+  if (typeof value === 'string' && /[\r\n]/.test(value)) throw generatorError(`${label} cannot contain CR/LF`)
+  return value
+}
+
+function escapeIdentifier(value, label) {
+  rejectLineBreaks(value, label)
   return String(value).replace(/([ ,=])/g, '\\$1')
 }
 
-function escapeString(value) {
+function escapeString(value, label) {
+  rejectLineBreaks(value, label)
   return String(value).replace(/([\\"])/g, '\\$1')
 }
 
@@ -378,17 +429,17 @@ export function encodeLineProtocol(point) {
   if (!point || typeof point !== 'object') throw generatorError('point is required')
   if (typeof point.measurement !== 'string' || !point.measurement) throw generatorError('measurement is required')
   requireSafeInteger(point.timestampMs, 'timestamp')
-  const tags = normalizeObjectEntries(point.tags ?? {}, 'tags').map(([key, value]) => `${escapeIdentifier(key)}=${escapeIdentifier(value)}`)
+  const tags = normalizeObjectEntries(point.tags ?? {}, 'tags').map(([key, value]) => `${escapeIdentifier(key, 'tag key')}=${escapeIdentifier(value, 'tag value')}`)
   const fields = normalizeObjectEntries(point.fields, 'fields').map(([key, field]) => {
     if (!field || typeof field !== 'object') throw generatorError(`field ${key} is invalid`)
     const value = assertFieldValue(field.type, field.value, `field ${key}`)
-    if (field.type === 'integer') return `${escapeIdentifier(key)}=${value}i`
-    if (field.type === 'boolean') return `${escapeIdentifier(key)}=${value}`
-    if (field.type === 'string') return `${escapeIdentifier(key)}="${escapeString(value)}"`
-    return `${escapeIdentifier(key)}=${value}`
+    if (field.type === 'integer') return `${escapeIdentifier(key, 'field key')}=${value}i`
+    if (field.type === 'boolean') return `${escapeIdentifier(key, 'field key')}=${value}`
+    if (field.type === 'string') return `${escapeIdentifier(key, 'field key')}="${escapeString(value, 'string field value')}"`
+    return `${escapeIdentifier(key, 'field key')}=${value}`
   })
   if (fields.length === 0) throw generatorError('point requires at least one field')
-  return `${escapeIdentifier(point.measurement)}${tags.length ? `,${tags.join(',')}` : ''} ${fields.join(',')} ${point.timestampMs}`
+  return `${escapeIdentifier(point.measurement, 'measurement')}${tags.length ? `,${tags.join(',')}` : ''} ${fields.join(',')} ${point.timestampMs}`
 }
 
 function* cartesianTags(tags, index = 0, current = {}) {
@@ -443,7 +494,7 @@ export function* iteratePlanLines(plan, seed) {
 }
 
 export function* batchLines(lines, maxBatchSize) {
-  if (!Number.isSafeInteger(maxBatchSize) || maxBatchSize <= 0) throw generatorError('batch size must be a positive integer')
+  if (!Number.isSafeInteger(maxBatchSize) || maxBatchSize <= 0 || maxBatchSize > 1_000) throw generatorError('batch size must be a positive integer no greater than 1000')
   if (!lines || typeof lines[Symbol.iterator] !== 'function') throw generatorError('lines must be iterable')
   const iterator = lines[Symbol.iterator]()
   while (true) {

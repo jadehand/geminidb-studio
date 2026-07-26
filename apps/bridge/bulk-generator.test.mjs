@@ -100,6 +100,46 @@ test('supports every numeric operator with integer strict-bound rounding', () =>
   }
 })
 
+test('intersects numeric equality constraints independently of their order', () => {
+  const fields = [{ name: 'x', type: 'integer', generator: { kind: 'random-number', min: 0, max: 10 } }]
+  const first = [
+    { left: 'x', operator: '=', right: { kind: 'fixed', value: 1 } },
+    { left: 'x', operator: '=', right: { kind: 'fixed', value: 2 } },
+  ]
+  const second = [...first].reverse()
+  for (const constraints of [first, second]) {
+    assert.throws(() => compileConstraints(fields, constraints), /CONSTRAINT_UNSATISFIABLE/)
+  }
+  assert.throws(() => compileConstraints(fields, [
+    { left: 'x', operator: '>', right: { kind: 'fixed', value: 1 } },
+    { left: 'x', operator: '=', right: { kind: 'fixed', value: 1 } },
+  ]), /CONSTRAINT_UNSATISFIABLE/)
+})
+
+test('fails closed when a float strict boundary leaves no representable value', () => {
+  assert.throws(() => compileConstraints([
+    { name: 'source', type: 'float', generator: { kind: 'fixed', value: 1 } },
+    { name: 'target', type: 'float', generator: { kind: 'random-number', min: 1, max: 1 } },
+  ], [{ left: 'target', operator: '>', right: { kind: 'field', field: 'source' } }]), /CONSTRAINT_UNSATISFIABLE/)
+})
+
+test('honors boolean probability and uses constrained singleton candidates deterministically', () => {
+  const fields = [{ name: 'ok', type: 'boolean', generator: { kind: 'random-boolean', truePercent: 25 } }]
+  const compiled = compileConstraints(fields, [])
+  assert.equal(compiled.generate(() => 0.24, 0).ok, true)
+  assert.equal(compiled.generate(() => 0.25, 0).ok, false)
+  const constrained = compileConstraints(fields, [{ left: 'ok', operator: '=', right: { kind: 'fixed', value: true } }])
+  assert.equal(constrained.generate(() => 0.99, 0).ok, true)
+})
+
+test('float uniform generation spans the entire feasible range', () => {
+  const compiled = compileConstraints([
+    { name: 'value', type: 'float', generator: { kind: 'random-number', min: 0, max: 100 } },
+  ], [])
+  assert.equal(compiled.generate(() => 0, 0).value, 0)
+  assert.ok(compiled.generate(() => 0.999, 0).value > 99)
+})
+
 test('supports string and boolean equality / inequality constraints', () => {
   const stringFields = [
     { name: 'left', type: 'string', generator: { kind: 'fixed', value: 'a' } },
@@ -155,4 +195,22 @@ test('batches lazily and enforces a positive batch size', () => {
   assert.equal(batches.next().value.length, 1_000)
   assert.equal(batches.next().value.length, 5)
   assert.throws(() => [...batchLines([], 0)], /positive integer/)
+  assert.throws(() => [...batchLines([], 1_001)], /1000/)
+})
+
+test('rejects CR/LF in every user-controlled Line Protocol component', () => {
+  const point = {
+    measurement: 'cpu',
+    tags: { host: 'node-01' },
+    fields: { value: { type: 'string', value: 'ok' } },
+    timestampMs: 1,
+  }
+  const invalidPoints = [
+    { ...point, measurement: 'cpu\nother' },
+    { ...point, tags: { 'host\r': 'node-01' } },
+    { ...point, tags: { host: 'node\n01' } },
+    { ...point, fields: { 'value\r': { type: 'string', value: 'ok' } } },
+    { ...point, fields: { value: { type: 'string', value: 'bad\nvalue' } } },
+  ]
+  for (const invalidPoint of invalidPoints) assert.throws(() => encodeLineProtocol(invalidPoint), /CR\/LF/)
 })
