@@ -8,6 +8,24 @@ import {
   iteratePlanLines,
 } from './bulk-generator.mjs'
 
+function nextRepresentable(value, direction) {
+  const buffer = new ArrayBuffer(8)
+  const view = new DataView(buffer)
+  view.setFloat64(0, value)
+  const bits = view.getBigUint64(0)
+  const increases = direction === 'up'
+  view.setBigUint64(0, increases === (value > 0) ? bits + 1n : bits - 1n)
+  return view.getFloat64(0)
+}
+
+function randomWords(...words) {
+  const values = words.flatMap(word => [
+    Number(word >> 32n) / 2 ** 32,
+    Number(word & 0xffff_ffffn) / 2 ** 32,
+  ])
+  return () => values.shift()
+}
+
 test('same seed creates byte-for-byte identical Line Protocol', () => {
   const plan = {
     targets: [{ date: '2026-07-26', measurement: 'cpu_1784995200', timestamps: [1784995200000] }],
@@ -152,6 +170,21 @@ test('keeps extreme float ranges finite at random boundaries and deterministic',
   assert.deepEqual(first, second)
 })
 
+test('finds an interior extreme float after consecutive excluded boundary values', () => {
+  const min = -1e308
+  const max = 1e308
+  const excluded = [min, nextRepresentable(min, 'up'), nextRepresentable(max, 'down'), max]
+  const compiled = compileConstraints([
+    { name: 'value', type: 'float', generator: { kind: 'random-number', min, max } },
+  ], excluded.map(value => ({ left: 'value', operator: '!=', right: { kind: 'fixed', value } })))
+  const first = compiled.generate(() => 0, 0).value
+  const second = compiled.generate(() => 0, 0).value
+  assert.equal(first, 0)
+  assert.equal(second, first)
+  assert.ok(first > min && first < max)
+  assert.ok(!excluded.includes(first))
+})
+
 test('generates the entire safe integer range without safe-count overflow', () => {
   const compiled = compileConstraints([
     {
@@ -160,13 +193,36 @@ test('generates the entire safe integer range without safe-count overflow', () =
       generator: { kind: 'random-number', min: -Number.MAX_SAFE_INTEGER, max: Number.MAX_SAFE_INTEGER },
     },
   ], [])
-  const values = [0, 0.5, 1 - Number.EPSILON].map(random => compiled.generate(() => random, 0).value)
-  assert.deepEqual(values.slice(0, 2), [-Number.MAX_SAFE_INTEGER, 0])
-  assert.ok(Number.isSafeInteger(values[2]))
-  assert.ok(values[2] <= Number.MAX_SAFE_INTEGER)
+  const count = BigInt(Number.MAX_SAFE_INTEGER) * 2n + 1n
+  const upperAcceptedWord = ((1n << 64n) / count) * count - 1n
+  const values = [randomWords(0n), randomWords(upperAcceptedWord)].map(random => compiled.generate(random, 0).value)
+  assert.deepEqual(values, [-Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER])
   assert.deepEqual(
     compiled.generate(createSeededRandom('wide-int'), 0),
     compiled.generate(createSeededRandom('wide-int'), 0),
+  )
+})
+
+test('uses unbiased uint64 mapping for three integer values and full safe-integer endpoints', () => {
+  const threeValues = compileConstraints([
+    { name: 'value', type: 'integer', generator: { kind: 'random-number', min: 0, max: 2 } },
+  ], [])
+  assert.equal(threeValues.generate(randomWords(0n), 0).value, 0)
+  assert.equal(threeValues.generate(randomWords(1n), 0).value, 1)
+  assert.equal(threeValues.generate(randomWords((1n << 64n) - 1n, 2n), 0).value, 2)
+
+  const min = -Number.MAX_SAFE_INTEGER
+  const max = Number.MAX_SAFE_INTEGER
+  const allSafeIntegers = compileConstraints([
+    { name: 'value', type: 'integer', generator: { kind: 'random-number', min, max } },
+  ], [])
+  const count = BigInt(max) - BigInt(min) + 1n
+  const upperAcceptedWord = ((1n << 64n) / count) * count - 1n
+  assert.equal(allSafeIntegers.generate(randomWords(0n), 0).value, min)
+  assert.equal(allSafeIntegers.generate(randomWords(upperAcceptedWord), 0).value, max)
+  assert.deepEqual(
+    allSafeIntegers.generate(createSeededRandom('safe-int-seed'), 0),
+    allSafeIntegers.generate(createSeededRandom('safe-int-seed'), 0),
   )
 })
 

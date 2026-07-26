@@ -238,14 +238,25 @@ function chooseInteger(min, max, excluded, random) {
   const start = BigInt(min)
   const count = BigInt(max) - start + 1n - BigInt(blocked.length)
   if (count <= 0n) return undefined
-  const unit = random()
-  if (!isFiniteNumber(unit) || unit < 0 || unit >= 1) throw generatorError('random must return a finite value from 0 (inclusive) to 1 (exclusive)')
-  const scale = 1n << 53n
-  let offset = (BigInt(Math.floor(unit * Number(scale))) * count) / scale
+  const range = 1n << 64n
+  const acceptedRange = range - range % count
+  let word
+  do {
+    const high = randomUint32(random)
+    const low = randomUint32(random)
+    word = BigInt(high) << 32n | BigInt(low)
+  } while (word >= acceptedRange)
+  let offset = word % count
   for (const value of blocked) {
     if (offset >= BigInt(value) - start) offset += 1n
   }
   return Number(start + offset)
+}
+
+function randomUint32(random) {
+  const unit = random()
+  if (!isFiniteNumber(unit) || unit < 0 || unit >= 1) throw generatorError('random must return a finite value from 0 (inclusive) to 1 (exclusive)')
+  return Math.floor(unit * 2 ** 32)
 }
 
 function nextUp(value) {
@@ -281,8 +292,18 @@ function chooseFloat(min, max, lowerInclusive, upperInclusive, excluded, random)
   let value = first * (1 - unit) + last * unit
   if (value > last) value = last
   if (!excluded.has(value)) return value
-  for (const candidate of [first, last, nextUp(first), nextDown(last)]) {
+  const middle = first * 0.5 + last * 0.5
+  for (const candidate of [middle, first, last]) {
     if (candidate >= first && candidate <= last && !excluded.has(candidate)) return candidate
+  }
+  for (const [start, step] of [[middle, nextUp], [middle, nextDown], [first, nextUp], [last, nextDown]]) {
+    let candidate = start
+    while (candidate >= first && candidate <= last) {
+      if (!excluded.has(candidate)) return candidate
+      const next = step(candidate)
+      if (next === candidate) break
+      candidate = next
+    }
   }
   return undefined
 }
