@@ -113,6 +113,7 @@ test('creation revalidates preview and control routes enforce connection identit
   clock += 900_001
   assert.equal((await request(api, 'POST', '/bulk-jobs', { previewId:fresh.body.previewId, acknowledgeCreate:true })).body.code, 'BULK_PREVIEW_REQUIRED')
   assert.equal(await api.handle({ method:'GET', pathname:'/unrelated', searchParams:new URLSearchParams(), session, payload:{} }), null)
+  assert.equal(await api.handle({ method:'GET', pathname:'/bulk-jobsfoo', searchParams:new URLSearchParams(), session, payload:{} }), null)
 })
 
 test('execution rejects previews when source schema, target existence, or RP changes', async () => {

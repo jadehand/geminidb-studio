@@ -199,7 +199,7 @@ export function createBulkApi({ jobManager, influx, now = () => Date.now(), rand
   }
 
   async function handle({ method, pathname, session, payload }) {
-    if (!pathname.startsWith('/bulk-jobs')) return null
+    if (pathname !== '/bulk-jobs' && !pathname.startsWith('/bulk-jobs/')) return null
     if (method === 'POST' && pathname === '/bulk-jobs/preview') return createPreview(session, payload)
     if (method === 'POST' && pathname === '/bulk-jobs') return execute(session, payload)
     if (method === 'GET' && pathname === '/bulk-jobs/active') {
