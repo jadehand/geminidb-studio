@@ -93,7 +93,7 @@ test('estimates points and worst-case new series across dates', () => {
 })
 
 test('planning rejects too many dates, an invalid interval, point and series overflows', () => {
-  assert.throws(() => estimatePlan(planInput({ dates: Array.from({ length: 8 }, (_, index) => `2026-07-${String(index + 1).padStart(2, '0')}`) })), /at most 7 dates/)
+  assert.throws(() => estimatePlan(planInput({ dates: Array.from({ length: 31 }, (_, index) => `2026-07-${String(index + 1).padStart(2, '0')}`) })), /at most 30 dates/)
   assert.throws(() => estimatePlan(planInput({ intervalSeconds: 1.5 })), /interval seconds must be an integer/)
   assert.throws(() => estimatePlan(planInput({ endTime: '23:59:59', intervalSeconds: 1 })), /point limit exceeded/)
   assert.throws(() => estimatePlan(planInput({

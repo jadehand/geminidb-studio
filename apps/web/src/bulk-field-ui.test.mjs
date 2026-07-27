@@ -28,7 +28,7 @@ test('生成参数随模式变化，不保留无意义横线占位', () => {
 })
 
 test('时间配置和弹窗键盘行为完整', () => {
-  assert.match(source, /\[1,2,3,4,5,6,7\]\.map/)
+  assert.match(source, /\[1,3,7,14,30\]\.map/)
   assert.match(source, /自定义秒数/)
   assert.match(source, /event\.key === 'Escape'/)
   assert.match(source, /aria-current=\{step === index \+ 1 \? 'step'/)

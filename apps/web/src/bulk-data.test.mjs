@@ -50,9 +50,9 @@ test('active run summary survives remount without secrets and history is idempot
   clearActiveBulkRun('job-1'); assert.equal(values.has(BULK_ACTIVE_KEY), false)
 }))
 
-test('instantaneous estimate enforces seven dates and calculates points and worst case series', () => {
+test('instantaneous estimate enforces thirty dates and calculates points and worst case series', () => {
   assert.deepEqual(estimateBulkDraft(draft()), { pointCount:4, maxNewSeries:2, tagCombinationCount:2 })
-  assert.throws(() => estimateBulkDraft(draft({ dates:Array.from({ length:8 }, (_, index) => `2026-07-${String(index + 1).padStart(2, '0')}`) })), /7/)
+  assert.throws(() => estimateBulkDraft(draft({ dates:Array.from({ length:31 }, (_, index) => `2026-07-${String(index + 1).padStart(2, '0')}`) })), /30/)
 })
 
 test('bulk error codes lead back to the relevant wizard step', () => {

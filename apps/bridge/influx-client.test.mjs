@@ -66,6 +66,26 @@ test('HTTPS 连接到 HTTP 服务时给出协议切换提示', async t => {
   )
 })
 
+test('tls_get_more_records:packet length too long 也给出协议切换提示', async t => {
+  const upstream = await fixture()
+  t.after(() => upstream.server.close())
+  const endpoint = upstream.endpoint.replace(/^http:/, 'https:')
+  await assert.rejects(
+    listDatabases({ endpoint, username:'rwuser', password:'secret', timeoutMs:2000, insecureSkipVerify:true }),
+    /目标服务不是 HTTPS.*切换为 HTTP/
+  )
+})
+
+test('新版 Node 的 HTTPS 到 HTTP 错误也给出协议切换提示', async t => {
+  const upstream = await fixture()
+  t.after(() => upstream.server.close())
+  const endpoint = upstream.endpoint.replace(/^http:/, 'https:')
+  await assert.rejects(
+    listDatabases({ endpoint, username:'rwuser', password:'secret', timeoutMs:2000, insecureSkipVerify:true }),
+    /目标服务不是 HTTPS.*切换为 HTTP/
+  )
+})
+
 test('bulk generation reads retention policies and tag values', async t => {
   const upstream = await fixture()
   t.after(() => upstream.server.close())

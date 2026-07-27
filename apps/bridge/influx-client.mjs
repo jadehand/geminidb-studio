@@ -45,7 +45,7 @@ function request(config, method, path, body = '', { signal } = {}) {
     })
     req.on('timeout', () => req.destroy(Object.assign(new Error(`GeminiDB Influx 请求超过 ${config.timeoutMs || 30000}ms`), { code:'ETIMEDOUT' })))
     req.on('error', error => {
-      if (isHttps && /wrong version number|wrong version|tls_validate_record_header/i.test(error.message)) {
+      if (isHttps && /wrong version number|wrong version|tls_validate_record_header|tls_get_more_records|packet length too long/i.test(error.message)) {
         return reject(new Error('目标服务不是 HTTPS，可能只支持 HTTP。请在连接设置中将协议切换为 HTTP 后重试。'))
       }
       if (RETRYABLE_NETWORK_CODES.has(error.code)) return reject(new InfluxHttpError(error.message, undefined, error.code))

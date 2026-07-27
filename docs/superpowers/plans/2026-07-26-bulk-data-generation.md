@@ -13,7 +13,7 @@
 - Target version is exactly `0.5.0`; baseline is `0.4.10`.
 - Only connections with `environment === "test"`, `readOnly === false`, a live session, and a selected Database may generate data.
 - One global bulk job may be unfinished at a time.
-- One job targets one existing logical prefix and at most 7 dates.
+- One job targets one existing logical prefix and at most 30 dates.
 - Dates and day-table suffixes use `Asia/Shanghai`; writes use UTC timestamps with `precision=ms`.
 - Maximum planned points is `100000`; maximum worst-case new series is `10000`.
 - Each batch contains at most `1000` points; dates are sequential; one date has at most `2` in-flight writes.
@@ -121,7 +121,7 @@ Implement parsing without relying on the machine timezone:
 
 ```js
 export const BULK_LIMITS = Object.freeze({
-  maxDates: 7,
+  maxDates: 30,
   maxPoints: 100_000,
   maxSeries: 10_000,
   minIntervalSeconds: 1,

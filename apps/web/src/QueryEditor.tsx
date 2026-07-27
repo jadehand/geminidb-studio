@@ -8,6 +8,7 @@ import 'monaco-editor/esm/vs/editor/contrib/suggest/browser/suggestController'
 import type { MeasurementSchema } from './types'
 import { findTimeHover } from './influxql-time-hover'
 import { completionContext, measurementFromQuery, shouldAutoSuggest } from './influxql-completion'
+import { formatInfluxQL } from './influxql-formatter'
 
 self.MonacoEnvironment = { getWorker: () => new EditorWorker() }
 loader.config({ monaco: monacoApi })
@@ -107,7 +108,6 @@ function validate(monaco: Monaco, model: MonacoEditor.ITextModel) {
   if (backtick) add('InfluxQL measurement 请使用双引号，不要使用 MySQL 反引号', monaco.MarkerSeverity.Error, backtick)
   const interval = value.match(/INTERVAL\s+\d+/i)
   if (interval) add('InfluxQL 时间范围请使用 now() - 1h 等写法', monaco.MarkerSeverity.Error, interval)
-  if (/^\s*select\b/i.test(value) && !/\bwhere\b[\s\S]*\btime\b[\s\S]*(?:>=|<=|>|<)/i.test(value)) add('SELECT 必须包含 time 范围，避免全量扫描', monaco.MarkerSeverity.Warning, value.match(/select/i))
   monaco.editor.setModelMarkers(model, 'influxql', markers)
 }
 
@@ -135,6 +135,18 @@ export default function QueryEditor({ tabId, value, measurements, selectedMeasur
     if (!editor) return
     if(focus)editor.focus()
     editor.trigger('geminidb-studio','editor.action.triggerSuggest',{})
+  }
+  const formatCurrentQuery = (editor = editorRef.current, monaco = monacoApi) => {
+    const model = editor?.getModel()
+    if (!editor || !model) return
+    const selection = editor.getSelection()
+    const range = selection && !selection.isEmpty() ? selection : model.getFullModelRange()
+    const source = model.getValueInRange(range)
+    const formatted = formatInfluxQL(source)
+    if (formatted === source) return
+    editor.executeEdits('geminidb-studio-format-influxql', [{ range, text: formatted, forceMoveMarkers: true }])
+    editor.pushUndoStop()
+    editor.focus()
   }
   const handleMount: OnMount = (editor, monaco) => {
     editorRef.current = editor
@@ -171,7 +183,10 @@ export default function QueryEditor({ tabId, value, measurements, selectedMeasur
       const selected = activeModel && selection ? activeModel.getValueInRange(selection).trim() : ''
       onRun(selected || activeModel?.getValue() || '')
     })
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Alt | monaco.KeyCode.KeyL, () => {
+      formatCurrentQuery(editor, monaco)
+    })
   }
   const schemaLabel=schemaState==='loading'?`正在读取 ${activeMeasurement} Schema…`:schemaState==='error'?`${activeMeasurement} Schema 加载失败`:schemaState==='ready'?`${activeMeasurement} · ${completionSchema.fields.length} Field · ${completionSchema.tags.length} Tag`:'输入 FROM 或选择 Measurement 后加载 Schema'
-  return <div className="monaco-shell"><Editor path={modelUri} language="sql" theme={theme==='dark'?'geminidb-dark':'geminidb-light'} value={value} beforeMount={registerInfluxQL} onMount={handleMount} onChange={next => onChange(next || '')} options={{ automaticLayout:true, minimap:{enabled:false}, fontFamily:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize:12, lineHeight:22, lineNumbers:'on', lineNumbersMinChars:3, lineDecorationsWidth:8, padding:{top:10,bottom:30}, scrollBeyondLastLine:false, wordWrap:'off', tabSize:2, suggest:{showWords:false,filterGraceful:true,showStatusBar:true,preview:true}, quickSuggestions:{other:true,comments:false,strings:true}, quickSuggestionsDelay:80, suggestOnTriggerCharacters:true, acceptSuggestionOnEnter:'on', snippetSuggestions:'inline', fixedOverflowWidgets:true, renderValidationDecorations:'on' }}/><div className="monaco-foot">{schemaState==='ready'?<button type="button" data-tour="schema-summary" className={`schema-${schemaState} schema-summary-button`} onClick={()=>onOpenSchema(activeMeasurement,completionSchema)} title="查看完整 Measurement Schema">{schemaLabel}</button>:<span data-tour="schema-summary" className={`schema-${schemaState}`}>{schemaLabel}</span>}<span className="completion-help"><button type="button" onMouseDown={event=>{event.preventDefault();openSuggestions()}}>显示补全</button><kbd>Ctrl</kbd> + <kbd>Space</kbd><i>·</i><kbd>Ctrl/Cmd</kbd> + <kbd>Enter</kbd> 执行</span></div></div>
+  return <div className="monaco-shell"><Editor path={modelUri} language="sql" theme={theme==='dark'?'geminidb-dark':'geminidb-light'} value={value} beforeMount={registerInfluxQL} onMount={handleMount} onChange={next => onChange(next || '')} options={{ automaticLayout:true, minimap:{enabled:false}, fontFamily:'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize:12, lineHeight:22, lineNumbers:'on', lineNumbersMinChars:3, lineDecorationsWidth:8, padding:{top:10,bottom:30}, scrollBeyondLastLine:false, wordWrap:'off', tabSize:2, suggest:{showWords:false,filterGraceful:true,showStatusBar:true,preview:true}, quickSuggestions:{other:true,comments:false,strings:true}, quickSuggestionsDelay:80, suggestOnTriggerCharacters:true, acceptSuggestionOnEnter:'on', snippetSuggestions:'inline', fixedOverflowWidgets:true, renderValidationDecorations:'on' }}/><div className="monaco-foot">{schemaState==='ready'?<button type="button" data-tour="schema-summary" className={`schema-${schemaState} schema-summary-button`} onClick={()=>onOpenSchema(activeMeasurement,completionSchema)} title="查看完整 Measurement Schema">{schemaLabel}</button>:<span data-tour="schema-summary" className={`schema-${schemaState}`}>{schemaLabel}</span>}<span className="completion-help"><button type="button" className="format-query" onMouseDown={event=>{event.preventDefault();formatCurrentQuery()}} title="DataGrip 快捷键：Ctrl+Alt+L">格式化</button><kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>L</kbd><i>·</i><button type="button" onMouseDown={event=>{event.preventDefault();openSuggestions()}}>显示补全</button><kbd>Ctrl</kbd> + <kbd>Space</kbd><i>·</i><kbd>Ctrl/Cmd</kbd> + <kbd>Enter</kbd> 执行</span></div></div>
 }

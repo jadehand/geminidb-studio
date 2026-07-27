@@ -1,5 +1,5 @@
 export const BULK_LIMITS = Object.freeze({
-  maxDates: 7,
+  maxDates: 30,
   maxPoints: 100_000,
   maxSeries: 10_000,
   minIntervalSeconds: 1,

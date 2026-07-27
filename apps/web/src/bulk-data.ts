@@ -40,7 +40,7 @@ export function bulkEntryState(context: BulkEntryContext) {
 
 export function estimateBulkDraft(draft: BulkDraft) {
   if (draft.dates.length === 0) throw new Error('至少选择一个日期')
-  if (draft.dates.length > 7) throw new Error('最多选择 7 个日期')
+  if (draft.dates.length > 30) throw new Error('最多选择 30 个日期')
   if (!Number.isInteger(draft.intervalSeconds) || draft.intervalSeconds < 1) throw new Error('采样间隔无效')
   const timeToSeconds = (value:string) => {
     const parts = value.split(':').map(Number)

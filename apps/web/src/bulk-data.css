@@ -64,3 +64,18 @@
 :root[data-theme="dark"] .bulk-history .bulk-active-summary{color:#b9d2f5;background:#263b55}
 :root[data-theme="dark"] .bulk-resume-draft{background:#222e3c;border-color:#405b7d}
 :root[data-theme="dark"] .bulk-progress-track{background:#323c49}
+
+/* Keep the wizard aligned with the compact desktop-tool language of the host app. */
+.bulk-modal{font-family:"Segoe UI Variable","Segoe UI","Microsoft YaHei UI","PingFang SC",sans-serif}
+.bulk-header h1{font-size:19px;letter-spacing:-.01em}.bulk-header p{font-size:12px}
+.bulk-body{padding:18px 22px}.bulk-section{gap:12px}
+.bulk-context{grid-template-columns:1fr 1fr;gap:8px;padding:12px}.bulk-context label{display:grid;gap:5px;color:#53657a;font-size:12px}.bulk-context label select{height:36px}.bulk-context small{grid-column:1/-1;color:#7a8796;font-size:11px}
+.bulk-note{padding:10px 12px}.bulk-note small{display:block;margin-top:5px;color:#607995;font-size:11px}
+.bulk-date-presets{padding:10px 12px;border:1px solid #dce3eb;border-radius:8px;background:#f8fafc}.bulk-date-presets span{font-weight:600;color:#53657a}.bulk-date-presets button{min-width:52px;height:32px;border-color:#cbd7e6;background:#fff}.bulk-date-presets button:hover{border-color:#6d9fe9;background:#edf4ff;color:#2f67d8}
+.bulk-selected-dates{min-height:38px}.bulk-time-grid{gap:10px}.bulk-time-grid label{gap:5px}.bulk-estimates{gap:8px}.bulk-estimates>div{padding:10px 12px}.bulk-estimates b{font-variant-numeric:tabular-nums}
+.bulk-targets{max-height:150px;overflow:auto;padding-right:2px}.bulk-targets>div{padding:7px 10px}
+.bulk-config{gap:12px}.bulk-config-card>header{min-height:38px;padding:0 10px}.bulk-config-head,.bulk-config-row{grid-template-columns:minmax(84px,1fr) 112px minmax(0,1.4fr);gap:8px;padding-left:10px;padding-right:10px}.bulk-config-row{min-height:44px}.bulk-config-row code{font-size:12px}.bulk-config select,.bulk-config input{height:34px;font-size:12px}.bulk-constraints,.bulk-config>.bulk-note{grid-column:1/-1}
+@media(min-width:901px){.bulk-config{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}.bulk-config-card{min-width:0}.bulk-config-card:not(.bulk-constraints){max-height:360px;overflow:auto}.bulk-config-card>header{position:sticky;top:0;z-index:1}.bulk-config-card:not(.bulk-constraints) .bulk-config-head{position:sticky;top:38px;z-index:1;background:#fff}}
+@media(max-width:760px){.bulk-context{grid-template-columns:1fr}.bulk-context small{grid-column:auto}.bulk-date-presets{align-items:stretch}.bulk-date-presets button{flex:1}.bulk-config-card:not(.bulk-constraints){max-height:none}}
+:root[data-theme="dark"] .bulk-date-presets{background:#202833;border-color:#394351}.bulk-config-card:not(.bulk-constraints) .bulk-config-head{background:#fff}
+:root[data-theme="dark"] .bulk-config-card:not(.bulk-constraints) .bulk-config-head{background:#202833}
