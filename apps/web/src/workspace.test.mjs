@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 const data=new Map()
 globalThis.localStorage={getItem:key=>data.get(key)??null,setItem:(key,value)=>data.set(key,value),removeItem:key=>data.delete(key)}
 const workspace=await import('./workspace.ts')
+const workspaceTabs=await import('./workspace-tabs.ts')
 
 test('migrates legacy query tabs in persisted workspace snapshots',()=>{
   data.set('gdb.workspace.snapshot',JSON.stringify({
@@ -22,6 +23,17 @@ test('persists measurement data tab descriptors without loaded rows',()=>{
 
   const snapshot=JSON.parse(data.get('gdb.workspace.snapshot'))
   assert.deepEqual(snapshot.tabs,[{kind:'measurement-data',id:'data-1',name:'cpu · 数据',connectionId:'c1',database:'metrics',measurement:'cpu'}])
+})
+
+test('round-trips the fallback query tab after closing the only measurement data tab',()=>{
+  const closed=workspaceTabs.closeWorkspaceTab([{
+    kind:'measurement-data',id:'data-1',name:'cpu · 数据',connectionId:'c1',database:'metrics',measurement:'cpu',
+  }],'data-1','data-1')
+  workspace.writeWorkspace({database:'metrics',measurement:'cpu',dayRange:'all',resultView:'result',activeConnection:'c1',activeTabId:closed.activeId,tabs:closed.tabs,sideTool:'catalog',sideOpen:true})
+
+  const snapshot=workspace.readWorkspace()
+  assert.deepEqual(snapshot.tabs,closed.tabs)
+  assert.equal(snapshot.activeTabId,'query-1')
 })
 
 test('工作区快照可保存、恢复并保留最近三份',()=>{
