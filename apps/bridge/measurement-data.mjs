@@ -25,6 +25,12 @@ function resultLimit(value) {
   return value
 }
 
+function fetchLimit(offset, limit) {
+  const value = offset + limit + 1
+  if (!Number.isSafeInteger(value)) throw new RangeError('fetch limit must be a safe integer')
+  return value
+}
+
 function nanoseconds(value, name) {
   if (typeof value !== 'string' || !DECIMAL_NANOSECONDS.test(value)) throw new TypeError(`${name} must be a decimal nanosecond string`)
   return BigInt(value)
@@ -34,17 +40,54 @@ export function buildMeasurementDataQuery({ measurement, limit, offset, startNs,
   const name = measurementIdentifier(measurement)
   const pageSize = pageLimit(limit)
   const pageStart = pageOffset(offset)
-  if (startNs === null && endNs === null) return `SELECT * FROM ${quoteIdentifier(name)} ORDER BY time DESC LIMIT ${pageSize + 1} OFFSET ${pageStart}`
+  const perSeriesLimit = fetchLimit(pageStart, pageSize)
+  if (startNs === null && endNs === null) return `SELECT * FROM ${quoteIdentifier(name)} ORDER BY time DESC LIMIT ${perSeriesLimit} OFFSET 0`
   if (startNs === null || endNs === null) throw new RangeError('startNs and endNs must be supplied together')
   const start = nanoseconds(startNs, 'startNs')
   const end = nanoseconds(endNs, 'endNs')
   if (start > end) throw new RangeError('startNs must be less than or equal to endNs')
-  return `SELECT * FROM ${quoteIdentifier(name)} WHERE time >= ${startNs}ns AND time <= ${endNs}ns ORDER BY time DESC LIMIT ${pageSize + 1} OFFSET ${pageStart}`
+  return `SELECT * FROM ${quoteIdentifier(name)} WHERE time >= ${startNs}ns AND time <= ${endNs}ns ORDER BY time DESC LIMIT ${perSeriesLimit} OFFSET 0`
 }
 
-export function flattenMeasurementSeries({ measurement, schema, series, limit }) {
+function parameterOnce(searchParams, name, { required = false, defaultValue = null } = {}) {
+  const values = searchParams.getAll(name)
+  if (values.length > 1) throw new RangeError(`${name} must appear at most once`)
+  if (!values.length) {
+    if (required) throw new RangeError(`${name} is required`)
+    return defaultValue
+  }
+  return values[0]
+}
+
+function decimalInteger(value, name) {
+  if (typeof value !== 'string' || !DECIMAL_NANOSECONDS.test(value)) throw new TypeError(`${name} must be a decimal integer`)
+  const number = Number(value)
+  if (!Number.isSafeInteger(number)) throw new RangeError(`${name} must be a safe integer`)
+  return number
+}
+
+export function parseMeasurementDataOptions(searchParams) {
+  const database = parameterOnce(searchParams, 'database', { required:true })
+  const measurement = parameterOnce(searchParams, 'measurement', { required:true })
+  const limit = pageLimit(decimalInteger(parameterOnce(searchParams, 'limit', { defaultValue:'50' }), 'limit'))
+  const offset = pageOffset(decimalInteger(parameterOnce(searchParams, 'offset', { defaultValue:'0' }), 'offset'))
+  const startNs = parameterOnce(searchParams, 'startNs')
+  const endNs = parameterOnce(searchParams, 'endNs')
+  if (!database || !measurement) throw new RangeError('database and measurement are required')
+  if (startNs !== null) nanoseconds(startNs, 'startNs')
+  if (endNs !== null) nanoseconds(endNs, 'endNs')
+  return { database, measurement, limit, offset, startNs, endNs }
+}
+
+function seriesIdentity(item) {
+  return `${item.name || ''}\u0000${JSON.stringify(Object.entries(item.tags || {}).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0))}`
+}
+
+export function flattenMeasurementSeries({ measurement, schema, series, limit, offset = 0 }) {
   const name = measurementIdentifier(measurement)
   const pageSize = resultLimit(limit)
+  const pageStart = pageOffset(offset)
+  const pageEnd = fetchLimit(pageStart, pageSize) - 1
   const points = []
   for (const [seriesIndex, item] of (series || []).entries()) {
     const columns = Array.isArray(item.columns) ? item.columns : []
@@ -53,7 +96,7 @@ export function flattenMeasurementSeries({ measurement, schema, series, limit })
       const timestampNs = row.time
       if (typeof timestampNs !== 'string') throw new TypeError('Influx nanosecond timestamps must be strings')
       const tags = Object.fromEntries(Object.entries(item.tags || {}).map(([key, value]) => [key, String(value)]))
-      for (const tag of schema.tags || []) if (row[tag] !== undefined && row[tag] !== null) tags[tag] = String(row[tag])
+      for (const tag of schema.tags || []) if (!Object.hasOwn(tags, tag) && row[tag] !== undefined && row[tag] !== null) tags[tag] = String(row[tag])
       const fields = Object.fromEntries((schema.fields || []).map(field => [field.name, row[field.name] ?? null]))
       points.push({
         id:`${name}:${seriesIndex}:${valueIndex}`,
@@ -62,8 +105,19 @@ export function flattenMeasurementSeries({ measurement, schema, series, limit })
         time:timestampNs,
         tags,
         fields,
+        sortTimestamp:nanoseconds(timestampNs, 'time'),
+        sortSeries:seriesIdentity(item),
+        sortRow:valueIndex,
       })
     }
   }
-  return { points:points.slice(0, pageSize), hasMore:points.length > pageSize }
+  points.sort((left, right) => {
+    if (left.sortTimestamp !== right.sortTimestamp) return left.sortTimestamp > right.sortTimestamp ? -1 : 1
+    if (left.sortSeries !== right.sortSeries) return left.sortSeries < right.sortSeries ? -1 : 1
+    return left.sortRow - right.sortRow
+  })
+  return {
+    points:points.slice(pageStart, pageEnd).map(({ sortTimestamp, sortSeries, sortRow, ...point }) => point),
+    hasMore:points.length > pageEnd,
+  }
 }
