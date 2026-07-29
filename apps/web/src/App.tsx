@@ -31,7 +31,7 @@ import MeasurementDataView from './MeasurementDataView'
 import UnsavedMeasurementDialog from './UnsavedMeasurementDialog'
 import type { ReadyConnectionSession } from './measurement-data'
 import type { MeasurementDraftState } from './measurement-editing'
-import { cancelMeasurementAction, closeMeasurementTabAfterGuard, closeWorkspaceTab as closeTabs, hasMeasurementTabDrafts, measurementTabDrafts, queueMeasurementAction, replaceMeasurementTabDrafts, type MeasurementTabDrafts, type PendingMeasurementAction, openMeasurementDataTab } from './workspace-tabs'
+import { cancelMeasurementAction, closeMeasurementTabAfterGuard, closeWorkspaceTab as closeTabs, deferConnectionSave, hasMeasurementTabDrafts, measurementTabDrafts, nextGuardedMeasurementStep, queueMeasurementAction, replaceMeasurementTabDrafts, type MeasurementTabDrafts, type PendingMeasurementAction, openMeasurementDataTab } from './workspace-tabs'
 import { waitForCurrentSchema, type SchemaRequestContext } from './schema-context'
 import type { BulkJobStatus, ClaudeDiagnosis, ClaudeSettings, Connection, Execution, Favorite, MeasurementSchema, QueryRow, QueryWorkspaceTab, WorkspaceTab } from './types'
 const QueryEditor = lazy(() => import('./QueryEditor'))
@@ -219,6 +219,14 @@ export default function App() {
     if (submit) measurementSubmitters.current.set(tabId, submit)
     else measurementSubmitters.current.delete(tabId)
   }
+  function advanceGuardedMeasurementTab() {
+    const step = nextGuardedMeasurementStep(workspaceTabsRef.current, measurementDraftsRef.current as MeasurementTabDrafts, measurementPendingAction.current)
+    if (!step.nextTabId) return false
+    if (step.nextTabId !== activeWorkspaceTabIdRef.current) selectQueryTab(step.nextTabId)
+    setMeasurementGuardTabId(step.nextTabId)
+    setMeasurementGuardError('还有其他数据页签存在未提交修改。')
+    return true
+  }
   async function submitGuardedMeasurementDrafts() {
     const tabId = measurementGuardTabId
     const pending = measurementPendingAction.current
@@ -229,15 +237,7 @@ export default function App() {
     const resolved = await submit()
     setMeasurementGuardSubmitting(false)
     if (!resolved) { setMeasurementGuardError('仍有未提交的修改。请处理成功后再继续，或选择放弃。'); return }
-    if (measurementGuardAll) {
-      const nextDirtyTabId = firstDirtyMeasurementTab()
-      if (nextDirtyTabId) {
-        if (nextDirtyTabId !== activeTabId) selectQueryTab(nextDirtyTabId)
-        setMeasurementGuardTabId(nextDirtyTabId)
-        setMeasurementGuardError('还有其他数据页签存在未提交修改。')
-        return
-      }
-    }
+    if (measurementGuardAll && advanceGuardedMeasurementTab()) return
     pending()
     clearMeasurementGuard()
   }
@@ -246,15 +246,7 @@ export default function App() {
     const tabId = measurementGuardTabId
     if (!pending || !tabId) return clearMeasurementGuard()
     setMeasurementDraftsForTab(tabId, {})
-    if (measurementGuardAll) {
-      const nextDirtyTabId = firstDirtyMeasurementTab()
-      if (nextDirtyTabId) {
-        if (nextDirtyTabId !== activeTabId) selectQueryTab(nextDirtyTabId)
-        setMeasurementGuardTabId(nextDirtyTabId)
-        setMeasurementGuardError('还有其他数据页签存在未提交修改。')
-        return
-      }
-    }
+    if (measurementGuardAll && advanceGuardedMeasurementTab()) return
     pending()
     measurementPendingAction.current = null
     clearMeasurementGuard()
@@ -606,7 +598,7 @@ export default function App() {
        {activeMeasurementDataTab && <MeasurementDataView tab={activeMeasurementDataTab} readyConnectionSession={readyConnectionSession} currentDatabase={database} draftsByRequest={measurementTabDrafts(measurementDraftsByTab as MeasurementTabDrafts, activeMeasurementDataTab.id) as Record<string, MeasurementDraftState>} onDraftsByRequestChange={next => setMeasurementDraftsForTab(activeMeasurementDataTab.id, next)} onGuardedAction={requestMeasurementAction} onSubmitReady={registerMeasurementSubmitter}/>}
     </main>
 
-    {connectionDialog && <ConnectionDialog connection={connectionDialog} onClose={() => setConnectionDialog(null)} onSave={connection => guardAllMeasurementDrafts(() => { const next = connections.some(c => c.id === connection.id) ? connections.map(c => c.id === connection.id ? connection : c) : [connection, ...connections]; persistConnections(next); setConnectionDialog(null); selectConnection(connection) })} onDuplicate={connection=>{const copy={...connection,id:crypto.randomUUID(),name:`${connection.name} 副本`};persistConnections([copy,...connections]);setConnectionDialog(copy)}} onDelete={connection=>{setConnectionDialog(null);setConnectionPendingDelete(connection)}}/>}
+    {connectionDialog && <ConnectionDialog connection={connectionDialog} onClose={() => setConnectionDialog(null)} onSave={connection => { const next = connections.some(c => c.id === connection.id) ? connections.map(c => c.id === connection.id ? connection : c) : [connection, ...connections]; guardAllMeasurementDrafts(deferConnectionSave(connection, next, { persist: persistConnections, close: () => setConnectionDialog(null), reconnect: selectConnection })) }} onDuplicate={connection=>{const copy={...connection,id:crypto.randomUUID(),name:`${connection.name} 副本`};persistConnections([copy,...connections]);setConnectionDialog(copy)}} onDelete={connection=>{setConnectionDialog(null);setConnectionPendingDelete(connection)}}/>}
     {connectionPendingDelete && <DeleteConnectionDialog connection={connectionPendingDelete} onCancel={() => setConnectionPendingDelete(null)} onConfirm={confirmDeleteConnection}/>}
     {writeConfirmation && <WriteCommandDialog database={writeConfirmation.database} statementCount={writeConfirmation.statementCount} executing={running} onCancel={() => setWriteConfirmation(null)} onConfirm={() => void executeWriteCommand()}/>}
     {favoriteDialog&&<FavoriteDialog database={database} sql={sql} onClose={()=>setFavoriteDialog(false)} onSave={confirmFavorite}/>}

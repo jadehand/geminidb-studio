@@ -42,6 +42,11 @@ export function hasMeasurementTabDrafts(drafts: MeasurementTabDrafts, tabId: str
   return Object.values(measurementTabDrafts(drafts, tabId)).some(request => request !== null && typeof request === 'object' && Object.keys(request).length > 0)
 }
 
+export function nextGuardedMeasurementStep(tabs: WorkspaceTab[], drafts: MeasurementTabDrafts, pending: PendingMeasurementAction) {
+  const nextTabId = tabs.find(tab => tab.kind === 'measurement-data' && hasMeasurementTabDrafts(drafts, tab.id))?.id ?? null
+  return { pending, nextTabId, shouldRun: Boolean(pending && !nextTabId) }
+}
+
 export function replaceMeasurementTabDrafts(drafts: MeasurementTabDrafts, tabId: string, next: Record<string, unknown>): MeasurementTabDrafts {
   if (Object.keys(next).length === 0) {
     const { [tabId]: _removed, ...rest } = drafts
@@ -73,4 +78,12 @@ export function discardMeasurementAction(pending: PendingMeasurementAction, disc
 
 export function cancelMeasurementAction(_pending: PendingMeasurementAction) {
   return null
+}
+
+export function deferConnectionSave<T>(connection: T, connections: T[], actions: { persist: (next: T[]) => void; close: () => void; reconnect: (next: T) => void }) {
+  return () => {
+    actions.persist(connections)
+    actions.close()
+    actions.reconnect(connection)
+  }
 }

@@ -90,6 +90,60 @@ test('guard behavior keeps partial actions, advances multi-dirty tabs one at a t
   assert.deepEqual(events, ['navigate'])
 })
 
+test('guard-all advances two dirty data tabs with one continuation and runs it only after the final resolution', () => {
+  const dataTabs = [
+    { kind: 'measurement-data', id: 'data-a', name: 'a · 数据', connectionId: 'c1', database: 'metrics', measurement: 'a' },
+    { kind: 'measurement-data', id: 'data-b', name: 'b · 数据', connectionId: 'c1', database: 'metrics', measurement: 'b' },
+  ]
+  let drafts = {
+    'data-a': { request: { field: 'draft-a' } },
+    'data-b': { request: { field: 'draft-b' } },
+  }
+  const events = []
+  const pending = () => events.push('continue')
+
+  drafts = tabs.replaceMeasurementTabDrafts(drafts, 'data-a', {})
+  let step = tabs.nextGuardedMeasurementStep(dataTabs, drafts, pending)
+  assert.equal(step.nextTabId, 'data-b')
+  assert.equal(step.shouldRun, false)
+  assert.equal(step.pending, pending)
+  assert.deepEqual(events, [])
+
+  step = tabs.nextGuardedMeasurementStep(dataTabs, drafts, pending)
+  assert.equal(step.nextTabId, 'data-b')
+  assert.equal(step.shouldRun, false)
+  assert.equal(tabs.hasMeasurementTabDrafts(drafts, 'data-b'), true)
+  assert.equal(tabs.cancelMeasurementAction(pending), null)
+  assert.deepEqual(events, [])
+
+  drafts = tabs.replaceMeasurementTabDrafts(drafts, 'data-b', {})
+  step = tabs.nextGuardedMeasurementStep(dataTabs, drafts, pending)
+  assert.equal(step.nextTabId, null)
+  assert.equal(step.shouldRun, true)
+  step.pending?.()
+  assert.deepEqual(events, ['continue'])
+})
+
+test('deferred connection save has no side effects until its guard continuation resolves', () => {
+  const payload = { id: 'c2', name: 'staging', endpoint: 'http://staging', username: 'dev', password: 'secret', readOnly: false }
+  const calls = []
+  const deferred = tabs.deferConnectionSave(payload, [payload], {
+    persist: connections => calls.push(['persist', connections]),
+    close: () => calls.push(['close']),
+    reconnect: connection => calls.push(['reconnect', connection]),
+  })
+
+  assert.deepEqual(calls, [])
+  assert.deepEqual(payload, { id: 'c2', name: 'staging', endpoint: 'http://staging', username: 'dev', password: 'secret', readOnly: false })
+  assert.equal(tabs.cancelMeasurementAction(deferred), null)
+  assert.deepEqual(calls, [])
+
+  deferred()
+  assert.deepEqual(calls.map(([name]) => name), ['persist', 'close', 'reconnect'])
+  assert.equal(calls[0][1][0], payload)
+  assert.equal(calls[2][1], payload)
+})
+
 test('draft state belongs to its data tab and survives the view unmount contract', () => {
   const persisted = tabs.replaceMeasurementTabDrafts({}, 'data-cpu', { request: { field: 'draft' } })
   const afterQueryTabUnmount = persisted
@@ -116,7 +170,8 @@ test('App binds the latest workspace close state and layers connection-save prot
   assert.match(app, /closeMeasurementTabAfterGuard\(workspaceTabsRef\.current, activeWorkspaceTabIdRef\.current, id\)/)
   assert.match(app, /selectQueryTab\(next\.activeId\)/)
   assert.match(app, /className="connection-row" onClick=\{\(\) => selectConnection\(connection\)\}/)
-  assert.match(app, /onSave=\{connection => guardAllMeasurementDrafts\(\(\) => \{[\s\S]*persistConnections\(next\)[\s\S]*setConnectionDialog\(null\)/)
+  assert.match(app, /guardAllMeasurementDrafts\(deferConnectionSave\(connection, next, \{ persist: persistConnections, close: \(\) => setConnectionDialog\(null\), reconnect: selectConnection \}\)\)/)
+  assert.match(app, /nextGuardedMeasurementStep\(workspaceTabsRef\.current, measurementDraftsRef\.current as MeasurementTabDrafts, measurementPendingAction\.current\)/)
   assert.ok(app.lastIndexOf('<UnsavedMeasurementDialog') > app.lastIndexOf('<DeleteConnectionDialog'))
   assert.match(view, /onGuardedAction\(tab\.id, hasDrafts, continuation\)/)
   assert.match(view, /onSubmitReady\(tab\.id, \(\) => submitDraftsRef\.current\(\)\)/)
