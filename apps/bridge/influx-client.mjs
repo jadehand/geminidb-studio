@@ -73,8 +73,9 @@ function resultError(payload) {
   return payload.results?.find(result => result.error)?.error
 }
 
-function queryPath(database, sql) {
-  const params = new URLSearchParams({ q:sql, epoch:'ms' })
+function queryPath(database, sql, epoch = 'ms') {
+  if (!['ms', 'ns'].includes(epoch)) throw new TypeError('epoch must be ms or ns')
+  const params = new URLSearchParams({ q:sql, epoch })
   if (database) params.set('db', database)
   return `/query?${params}`
 }
@@ -96,9 +97,9 @@ function parseDurationMs(value) {
   return total
 }
 
-export async function influxQuery(config, database, sql) {
+export async function influxQuery(config, database, sql, { epoch = 'ms' } = {}) {
   const started = performance.now()
-  const response = await request(config, 'GET', queryPath(database, sql))
+  const response = await request(config, 'GET', queryPath(database, sql, epoch))
   const payload = parseJson(response.text)
   const error = resultError(payload)
   if (error) throw new Error(error)

@@ -22,6 +22,7 @@ async function fixture() {
       const query = url.searchParams.get('q')
       if (query === 'INSERT bad value=1') return response.end(JSON.stringify({ results: [{ error: 'invalid insert' }] }))
       if (query === 'SHOW DATABASES') return response.end(JSON.stringify({ results: [{ series: [{ name: 'databases', columns: ['name'], values: [['_internal'], ['monitoring']] }] }] }))
+      if (query === 'SELECT value FROM cpu WHERE time = 1784995200000000000ns') return response.end(JSON.stringify({ results: [{ series: [{ name: 'cpu', columns: ['time', 'value'], values: [['1784995200000000000', 37.82]] }] }] }))
       if (query === 'SHOW MEASUREMENTS') return response.end(JSON.stringify({ results: [{ series: [{ name: 'measurements', columns: ['name'], values: [['cpu_1784563200'], ['cpu_1784649600']] }] }] }))
       if (query === 'SHOW RETENTION POLICIES ON "monitoring"') return response.end(JSON.stringify({ results: [{ series: [{ name: 'retention_policies', columns: ['name', 'duration', 'default'], values: [['autogen', '168h0m0s', true]] }] }] }))
       if (query === 'SHOW TAG VALUES FROM "cpu_1784995200" WITH KEY = "host" LIMIT 1001') return response.end(JSON.stringify({ results: [{ series: [{ name: 'cpu_1784995200', columns: ['key', 'value'], values: [['host', 'node-01'], ['host', 'node-02']] }] }] }))
@@ -150,3 +151,16 @@ test('a connection reset is a retryable Influx error', async t => {
 })
 
 test.after(() => closeInfluxAgents())
+
+test('influxQuery requests nanosecond epochs without changing the millisecond default', async t => {
+  const upstream = await fixture()
+  t.after(() => upstream.server.close())
+  const config = { endpoint: upstream.endpoint, username: 'rwuser', password: 'secret', timeoutMs: 2000, insecureSkipVerify: false }
+
+  const nanoseconds = await influxQuery(config, 'monitoring', 'SELECT value FROM cpu WHERE time = 1784995200000000000ns', { epoch:'ns' })
+  assert.equal(nanoseconds.rows[0].time, '1784995200000000000')
+  assert.equal(upstream.requests.at(-1).url.searchParams.get('epoch'), 'ns')
+
+  await influxQuery(config, 'monitoring', 'SELECT value FROM cpu LIMIT 1')
+  assert.equal(upstream.requests.at(-1).url.searchParams.get('epoch'), 'ms')
+})
