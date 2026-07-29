@@ -54,6 +54,33 @@ test('closing the only measurement data tab creates and activates a default quer
   assert.deepEqual(result,{tabs:[{kind:'query',id:'query-1',name:'查询 1',sql:'SHOW DATABASES'}],activeId:'query-1'})
 })
 
+test('closing the only query tab resets it instead of removing it',()=>{
+  const result=workspaceTabs.closeWorkspaceTab([{kind:'query',id:'query-9',name:'custom',sql:'SELECT 1'}],'query-9','query-9')
+
+  assert.deepEqual(result,{tabs:[{kind:'query',id:'query-9',name:'查询 1',sql:''}],activeId:'query-9'})
+})
+
+test('closing the unique query in a multi-tab workspace leaves the active data tab',()=>{
+  const tabs=[
+    {kind:'measurement-data',id:'data-1',name:'cpu · 数据',connectionId:'c1',database:'metrics',measurement:'cpu'},
+    {kind:'query',id:'query-1',name:'query 1',sql:'SHOW DATABASES'},
+  ]
+
+  assert.deepEqual(workspaceTabs.closeWorkspaceTab(tabs,'query-1','query-1'),{
+    tabs:[tabs[0]],activeId:'data-1',
+  })
+})
+
+test('closing a query between data tabs selects its preceding data neighbor',()=>{
+  const tabs=[
+    {kind:'measurement-data',id:'data-1',name:'cpu · 数据',connectionId:'c1',database:'metrics',measurement:'cpu'},
+    {kind:'query',id:'query-1',name:'query 1',sql:'SHOW DATABASES'},
+    {kind:'measurement-data',id:'data-2',name:'mem · 数据',connectionId:'c1',database:'metrics',measurement:'mem'},
+  ]
+
+  assert.equal(workspaceTabs.closeWorkspaceTab(tabs,'query-1','query-1').activeId,'data-1')
+})
+
 test('closing an active tab selects its previous neighbor without changing an inactive selection',()=>{
   const tabs=[
     {kind:'query',id:'query-1',name:'query 1',sql:'one'},

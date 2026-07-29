@@ -19,9 +19,10 @@ export function closeWorkspaceTab(tabs:WorkspaceTab[],activeTabId:string,id:stri
   const index=tabs.findIndex(tab=>tab.id===id)
   if(index<0)return {tabs,activeId:activeTabId}
   const current=tabs[index]
-  const queryCount=tabs.filter(tab=>tab.kind==='query').length
-  if(current.kind==='query'&&queryCount===1)return {tabs:tabs.map(tab=>tab.id===id?{...current,name:'查询 1',sql:''}:tab),activeId:activeTabId}
-  if(tabs.length===1)return {tabs:[DEFAULT_QUERY_WORKSPACE_TAB],activeId:DEFAULT_QUERY_WORKSPACE_TAB.id}
+  if(tabs.length===1){
+    if(current.kind==='query')return {tabs:[{...current,name:'查询 1',sql:''}],activeId:current.id}
+    return {tabs:[DEFAULT_QUERY_WORKSPACE_TAB],activeId:DEFAULT_QUERY_WORKSPACE_TAB.id}
+  }
   const next=tabs.filter(tab=>tab.id!==id)
   return {tabs:next,activeId:id===activeTabId?next[Math.max(0,index-1)].id:activeTabId}
 }
