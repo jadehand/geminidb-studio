@@ -1,4 +1,5 @@
-import type { MeasurementSchema } from './types'
+import { conversionFromMilliseconds } from './time-converter.ts'
+import type { MeasurementDataWorkspaceTab, MeasurementSchema } from './types'
 
 const NANOSECONDS_PER_SECOND = 1_000_000_000n
 const NANOSECONDS_PER_DAY = 86_400n * NANOSECONDS_PER_SECOND
@@ -44,6 +45,37 @@ export type MeasurementDataPage = {
   schema: MeasurementSchema
   points: MeasurementPoint[]
   page: { limit: number; offset: number; hasMore: boolean }
+}
+
+export type ReadyConnectionSession = {
+  connectionId: string
+  generation: number
+}
+
+export function measurementDataRequestKey(
+  tab: Pick<MeasurementDataWorkspaceTab, 'connectionId' | 'database' | 'measurement'>,
+  readySession: ReadyConnectionSession | null,
+  currentDatabase: string,
+) {
+  if (
+    !readySession
+    || readySession.connectionId !== tab.connectionId
+    || currentDatabase !== tab.database
+    || !Number.isSafeInteger(readySession.generation)
+    || readySession.generation < 0
+  ) return null
+  return JSON.stringify([readySession.connectionId, readySession.generation, tab.database, tab.measurement])
+}
+
+export function measurementNanosecondsToBeijing(value: unknown) {
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) return null
+  try {
+    const milliseconds = BigInt(value) / 1_000_000n
+    if (milliseconds > BigInt(Number.MAX_SAFE_INTEGER)) return null
+    return conversionFromMilliseconds(Number(milliseconds))?.beijing ?? null
+  } catch {
+    return null
+  }
 }
 
 export function nextMeasurementOffset(displayedPage: MeasurementDataPage['page'] | null, direction: -1 | 1) {

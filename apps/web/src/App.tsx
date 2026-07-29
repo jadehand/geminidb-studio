@@ -28,6 +28,7 @@ import { createWriteExecutionLock, isWriteConfirmationCurrent, isWriteExecutionC
 import WorkspaceTabs from './WorkspaceTabs'
 import MeasurementActionMenu, { type MeasurementActionAnchor } from './MeasurementActionMenu'
 import MeasurementDataView from './MeasurementDataView'
+import type { ReadyConnectionSession } from './measurement-data'
 import { closeWorkspaceTab as closeTabs, openMeasurementDataTab } from './workspace-tabs'
 import { waitForCurrentSchema, type SchemaRequestContext } from './schema-context'
 import type { BulkJobStatus, ClaudeDiagnosis, ClaudeSettings, Connection, Execution, Favorite, MeasurementSchema, QueryRow, QueryWorkspaceTab, WorkspaceTab } from './types'
@@ -52,6 +53,7 @@ function download(name: string, type: string, content: string) { const url = URL
 export default function App() {
   const [connections, setConnections] = useState<Connection[]>(() => migrateConnections(load('gdb.connections', [])))
   const [activeConnection, setActiveConnection] = useState(loadActiveConnection)
+  const [readyConnectionSession, setReadyConnectionSession] = useState<ReadyConnectionSession | null>(null)
   const [databases, setDatabases] = useState<string[]>([])
   const [database, setDatabase] = useState(() => load('gdb.workspace.database',''))
   const [tables, setTables] = useState<string[]>([])
@@ -182,6 +184,7 @@ export default function App() {
     setConnectionPendingDelete(null)
     if (activeConnection === connection.id) {
       const nextId = next[0]?.id || ''
+      setReadyConnectionSession(null)
       setActiveConnection(nextId)
       save('gdb.activeConnection', nextId)
       if (next[0]) void connect(next[0])
@@ -192,8 +195,9 @@ export default function App() {
   function beginSidebarResize(event:React.PointerEvent<HTMLButtonElement>){event.preventDefault();const origin=event.clientX,start=sidebarWidth;setSidebarDragging(true);const move=(next:PointerEvent)=>setSidebarWidth(fitSidebarWidth(start+next.clientX-origin));const stop=(next:PointerEvent)=>{const width=fitSidebarWidth(start+next.clientX-origin);setSidebarWidth(width);save('gdb.sidebarWidth',width);setSidebarDragging(false);window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',stop)};window.addEventListener('pointermove',move);window.addEventListener('pointerup',stop)}
 
   async function connect(connection = currentConnection) {
-    if (!connection) return
+    if (!connection) { setReadyConnectionSession(null); return }
     const sessionGeneration = ++connectionSession.current
+    setReadyConnectionSession(null)
     invalidateWriteContext()
     setStatus('正在登录…')
     try {
@@ -203,9 +207,11 @@ export default function App() {
       if (sessionGeneration !== connectionSession.current) return
       const nextDb = list.includes(database) ? database : list[0]
       const nextTables=await bridge.tables(nextDb),restoredTable=nextDb===database&&nextTables.includes(selectedTable)?selectedTable:''
+      if (sessionGeneration !== connectionSession.current) return
       schemaRequest.current += 1; setSelectedTable(restoredTable); setSchema({ fields: [], tags: [] }); setSchemaLoading(false)
+      setReadyConnectionSession({connectionId:connection.id,generation:sessionGeneration})
       setDatabases(list); setDatabase(nextDb); setTables(nextTables); setStatus(`${connection.name} 已连接`); toast(restoredTable?'已恢复上次查询工作区':'已登录并载入数据目录');if(restoredTable)void loadSchema(restoredTable)
-    } catch (error) { if (sessionGeneration !== connectionSession.current) return; setStatus('连接失败'); toast(error instanceof Error ? error.message : '连接失败') }
+    } catch (error) { if (sessionGeneration !== connectionSession.current) return; setReadyConnectionSession(null); setStatus('连接失败'); toast(error instanceof Error ? error.message : '连接失败') }
   }
 
   useEffect(() => {
@@ -223,6 +229,7 @@ export default function App() {
     save('gdb.connections', connections.map(connection => ({ ...connection, password: '' })))
     void deleteCredential('mock')
     if (!currentConnection) {
+      setReadyConnectionSession(null)
       setActiveConnection('')
       setDatabase('')
       setTables([])
@@ -491,7 +498,7 @@ export default function App() {
 
     <main><section className="editor" data-tour="query-editor"><div className="editor-head"><div><h1>{activeQueryTab?'查询窗口':'数据窗口'}</h1><span className="context">{database||'未连接'} / {selectedTable || '未选表'}</span>{selectedTable&&<button className="schema-refresh" disabled={schemaLoading} onClick={()=>void loadSchema(selectedTable,true)} title="刷新当前 Measurement 的 Field 和 Tag">{schemaLoading?'… Schema':'↻ Schema'}</button>}</div>{activeQueryTab&&<div className="actions"><button className="claude wide-query-action" onClick={() => void askClaude()}>✦ 诊断查询</button><button className="wide-query-action" onClick={saveFavorite}>☆ 收藏语句</button><details className="action-menu query-more"><summary>更多 ⋯</summary><div><button onClick={() => void askClaude()}>✦ 诊断查询</button><button onClick={saveFavorite}>☆ 收藏语句</button></div></details><button data-tour="execute-query" className={running ? 'danger' : 'primary'} onClick={running ? cancelQuery : () => void runQuery()}>{running ? '■ 取消查询' : '▶ 执行命令'}</button></div>}</div><WorkspaceTabs tabs={workspaceTabs} activeTabId={activeTabId} onSelect={selectQueryTab} onClose={closeWorkspaceTab} onAddQuery={addQueryTab} onRenameQuery={renameQueryTab}/>{activeQueryTab?<Suspense fallback={<div className="editor-loading">正在加载 InfluxQL 编辑器…</div>}><QueryEditor key={`${activeQueryTab.id}:${database}`} tabId={activeQueryTab.id} value={sql} measurements={tables} selectedMeasurement={selectedTable} schema={schema} resolveSchema={resolveSchema} theme={resolvedTheme} onChange={setSql} onRun={command=>void runQuery(command)} onOpenSchema={(measurement,nextSchema)=>setSchemaDialog({measurement,schema:nextSchema})}/></Suspense>:<div className="editor-loading">数据视图将在下一步提供。</div>}</section>
       <section className="results" data-tour="query-results"><div className="result-tabs" data-tour="result-actions"><div>{visibleResultViews.map(item => <button key={item} className={view === item ? 'active' : ''} onClick={() => setView(item)}>{({result:'执行结果',history:`执行记录 ${history.length}`,messages:'交互消息',favorites:`收藏 ${favorites.length}`})[item]}</button>)}</div>{view === 'result' && <div className="result-actions"><button onClick={() => void copyResults()}>复制</button><button className="wide-export-action" onClick={exportCsv}>CSV</button><button className="wide-export-action" onClick={exportExcel}>Excel</button><button className="wide-export-action" onClick={exportJson}>JSON</button><button className="wide-export-action" onClick={()=>void selectExportDirectory()} title={exportDirectory||'系统下载目录'}>目录</button><details className="action-menu export-menu"><summary>导出 ▾</summary><div><button onClick={exportCsv}>导出 CSV</button><button onClick={exportExcel}>导出 Excel</button><button onClick={exportJson}>导出 JSON</button><button onClick={()=>void selectExportDirectory()} title={exportDirectory||'系统下载目录'}>选择导出目录…</button>{exportDirectory&&<button onClick={resetExportDirectory}>恢复系统下载目录</button>}</div></details></div>}</div><div className="result-body"><ResultContent view={view} rows={rows} history={history} favorites={favorites} onUseSql={value => { setSql(value); setView('result') }} onRestoreSql={value=>{setSql(value);toast('已放入当前查询窗口')}} onRemoveFavorite={id => { const next = favorites.filter(f => f.id !== id); setFavorites(next); save('gdb.favorites', next) }}/></div><div className="statusbar"><b className={resultStatus === 'ERROR' ? 'danger' : ''}>{resultStatus}</b><span>{resultMeta}</span></div></section>
-       {activeMeasurementDataTab && <MeasurementDataView tab={activeMeasurementDataTab} currentConnectionId={currentConnection?.id} currentDatabase={database}/>}
+       {activeMeasurementDataTab && <MeasurementDataView tab={activeMeasurementDataTab} readyConnectionSession={readyConnectionSession} currentDatabase={database}/>}
     </main>
 
     {connectionDialog && <ConnectionDialog connection={connectionDialog} onClose={() => setConnectionDialog(null)} onSave={connection => { const next = connections.some(c => c.id === connection.id) ? connections.map(c => c.id === connection.id ? connection : c) : [connection, ...connections]; persistConnections(next); setActiveConnection(connection.id); save('gdb.activeConnection', connection.id); setConnectionDialog(null); void connect(connection) }} onDuplicate={connection=>{const copy={...connection,id:crypto.randomUUID(),name:`${connection.name} 副本`};persistConnections([copy,...connections]);setConnectionDialog(copy)}} onDelete={connection=>{setConnectionDialog(null);setConnectionPendingDelete(connection)}}/>}

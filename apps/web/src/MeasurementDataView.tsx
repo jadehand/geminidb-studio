@@ -1,28 +1,28 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { bridge } from './api'
-import { findTimeHover } from './influxql-time-hover'
-import { measurementDay, measurementRangeFromBeijingTime, nextMeasurementOffset, normalizeMeasurementDataOptions, type MeasurementDataOptions, type MeasurementDataPage } from './measurement-data'
+import { measurementDataRequestKey, measurementDay, measurementNanosecondsToBeijing, measurementRangeFromBeijingTime, nextMeasurementOffset, normalizeMeasurementDataOptions, type MeasurementDataOptions, type MeasurementDataPage, type ReadyConnectionSession } from './measurement-data'
 import { ResultGridZoomControls } from './ResultGridZoomControls'
 import { stepGridZoom, useGridZoom } from './result-grid-zoom'
 import type { MeasurementDataWorkspaceTab } from './types'
 
 type Props = {
   tab: MeasurementDataWorkspaceTab
-  currentConnectionId: string | undefined
+  readyConnectionSession: ReadyConnectionSession | null
   currentDatabase: string
 }
 
 const PAGE_SIZES = [50, 100, 200, 500] as const
 
 function timeTitle(value: string) {
-  const hover = findTimeHover("time = '" + value + "'", 10)
-  return hover ? '北京时间：' + hover.beijing : '精确纳秒时间：' + value
+  const beijing = measurementNanosecondsToBeijing(value)
+  return beijing ? '北京时间：' + beijing : '精确纳秒时间：' + value
 }
 
-export default function MeasurementDataView({ tab, currentConnectionId, currentDatabase }: Props) {
+export default function MeasurementDataView({ tab, readyConnectionSession, currentDatabase }: Props) {
   const day = useMemo(() => measurementDay(tab.measurement), [tab.measurement])
-  const available = tab.connectionId === currentConnectionId && tab.database === currentDatabase
+  const requestKey = measurementDataRequestKey(tab, readyConnectionSession, currentDatabase)
+  const available = requestKey !== null
   const [options, setOptions] = useState<MeasurementDataOptions>(() => normalizeMeasurementDataOptions())
   const [page, setPage] = useState<MeasurementDataPage | null>(null)
   const [loading, setLoading] = useState(false)
@@ -42,7 +42,7 @@ export default function MeasurementDataView({ tab, currentConnectionId, currentD
   }, [tab.id])
 
   useEffect(() => {
-    if (tab.connectionId !== currentConnectionId || tab.database !== currentDatabase) {
+    if (!requestKey) {
       setLoading(false)
       return
     }
@@ -66,7 +66,7 @@ export default function MeasurementDataView({ tab, currentConnectionId, currentD
       disposed = true
       controller.abort()
     }
-  }, [currentConnectionId, currentDatabase, options, reload, tab.connectionId, tab.database, tab.measurement])
+  }, [requestKey, options, reload])
 
   const tags = page?.schema.tags ?? []
   const fields = page?.schema.fields ?? []
