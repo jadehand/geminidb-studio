@@ -8,7 +8,7 @@ type Props = {
   onViewData: () => void
   onNewQuery: () => void
   onViewSchema: () => void
-  onClose: () => void
+  onClose: (restoreFocus?: boolean) => void
 }
 
 const MENU_WIDTH = 176
@@ -24,7 +24,7 @@ export default function MeasurementActionMenu({ anchor, measurement, onViewData,
 
   useEffect(() => {
     const closeOutside = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) onClose()
+      if (!menuRef.current?.contains(event.target as Node)) onClose(true)
     }
     document.addEventListener('pointerdown', closeOutside)
     itemRefs.current[0]?.focus()
@@ -33,14 +33,14 @@ export default function MeasurementActionMenu({ anchor, measurement, onViewData,
 
   function run(index: number) {
     actions[index]()
-    onClose()
+    onClose(false)
   }
 
   function onKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
     const index = itemRefs.current.findIndex(item => item === event.currentTarget)
     if (event.key === 'Escape') {
       event.preventDefault()
-      onClose()
+      onClose(true)
       return
     }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {

@@ -28,12 +28,14 @@ import { createWriteExecutionLock, isWriteConfirmationCurrent, isWriteExecutionC
 import WorkspaceTabs from './WorkspaceTabs'
 import MeasurementActionMenu, { type MeasurementActionAnchor } from './MeasurementActionMenu'
 import { closeWorkspaceTab as closeTabs, openMeasurementDataTab } from './workspace-tabs'
+import { waitForCurrentSchema, type SchemaRequestContext } from './schema-context'
 import type { BulkJobStatus, ClaudeDiagnosis, ClaudeSettings, Connection, Execution, Favorite, MeasurementSchema, QueryRow, QueryWorkspaceTab, WorkspaceTab } from './types'
 const QueryEditor = lazy(() => import('./QueryEditor'))
 
 const DEFAULT_SQL = 'SHOW DATABASES'
 type SideTool = 'connections' | 'catalog'
 type ResultView = 'result' | 'chart' | 'history' | 'messages' | 'favorites'
+type MeasurementActionContext = Pick<SchemaRequestContext, 'connectionId'|'database'|'sessionGeneration'>
 const visibleResultViews: Exclude<ResultView, 'chart'>[] = ['result', 'history', 'messages', 'favorites']
 const visibleResultView = (view: ResultView): ResultView => view === 'chart' ? 'result' : view
 const DEFAULT_TAB: QueryWorkspaceTab = { kind:'query',id: 'query-1', name: '查询 1', sql: DEFAULT_SQL }
@@ -58,7 +60,7 @@ export default function App() {
   const [databaseOpen, setDatabaseOpen] = useState(true)
   const [measurementsOpen, setMeasurementsOpen] = useState(true)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
-  const [measurementAction, setMeasurementAction] = useState<{measurement:string;anchor:MeasurementActionAnchor}|null>(null)
+  const [measurementAction, setMeasurementAction] = useState<{measurement:string;anchor:MeasurementActionAnchor;context:MeasurementActionContext}|null>(null)
   const [filter, setFilter] = useState('')
   const [dayRange, setDayRange] = useState<DayRange>(()=>load('gdb.workspace.dayRange','all'))
   const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceTab[]>(() => { const tabs=migrateWorkspaceTabs(load<unknown>('gdb.queryTabs',[DEFAULT_TAB])); return tabs.length ? tabs : [DEFAULT_TAB] })
@@ -89,6 +91,7 @@ export default function App() {
   const schemaCache = useRef(new Map<string, MeasurementSchema>())
   const schemaPending = useRef(new Map<string, Promise<MeasurementSchema>>())
   const schemaRequest = useRef(0)
+  const measurementActionTrigger = useRef<HTMLElement | null>(null)
   const cancelReason = useRef<'user' | 'timeout' | null>(null)
   const writeCancelReason = useRef<'user' | 'timeout' | 'context' | null>(null)
   const [connectionDialog, setConnectionDialog] = useState<Connection | null>(null)
@@ -143,9 +146,11 @@ export default function App() {
     schemaPending.current.set(key, request)
     return request
   },[activeConnection,database])
+  const isCurrentSchemaContext = useCallback((context: SchemaRequestContext) => context.connectionId === currentConnectionRef.current?.id && context.database === databaseRef.current && context.sessionGeneration === connectionSession.current && context.requestId === schemaRequest.current, [])
+  const isCurrentMeasurementContext = useCallback((context: MeasurementActionContext) => context.connectionId === currentConnectionRef.current?.id && context.database === databaseRef.current && context.sessionGeneration === connectionSession.current, [])
   const tableGroups = useMemo(() => filteredTables.reduce<Record<string, string[]>>((all, table) => { const prefix = splitTable(table).prefix; (all[prefix] ||= []).push(table); return all }, {}), [filteredTables])
 
-  function toast(text: string) { setMessage(text); window.setTimeout(() => setMessage(''), 1800) }
+  const toast = useCallback((text: string) => { setMessage(text); window.setTimeout(() => setMessage(''), 1800) }, [])
   function invalidateWriteContext() {
     validationAbort.current?.abort()
     validationAbort.current = null
@@ -289,51 +294,65 @@ export default function App() {
   }
 
   function generatedMeasurementQuery(table: string) { return `SELECT *\nFROM "${table}"\nWHERE time >= now() - 1h\nORDER BY time DESC\nLIMIT 100` }
-  function canOpenMeasurement(measurement: string) {
+  function canOpenMeasurement(measurement: string, context: MeasurementActionContext) {
+    if (!isCurrentMeasurementContext(context)) {
+      toast(`无法打开 ${measurement}：连接或 Database 已变化`)
+      return false
+    }
     if (currentConnection && database) return true
     toast(`无法打开 ${measurement}：请先选择有效的连接和 Database`)
     return false
   }
-  function openMeasurementActions(measurement: string, trigger: HTMLElement, x?: number, y?: number) {
+  const closeMeasurementActions = useCallback((restoreFocus = false) => {
+    const trigger = measurementActionTrigger.current
+    measurementActionTrigger.current = null
+    setMeasurementAction(null)
+    if (restoreFocus) window.requestAnimationFrame(() => { if (!measurementActionTrigger.current) trigger?.focus() })
+  }, [])
+  const openMeasurementActions = useCallback((measurement: string, trigger: HTMLElement, x?: number, y?: number) => {
     const rect = trigger.getBoundingClientRect()
-    setMeasurementAction({ measurement, anchor: { x: x ?? rect.left + 20, y: y ?? rect.bottom } })
-  }
-  function viewMeasurementData(measurement: string) {
-    if (!canOpenMeasurement(measurement) || !currentConnection) return
+    measurementActionTrigger.current = trigger
+    setMeasurementAction({ measurement, anchor: { x: x ?? rect.left + 20, y: y ?? rect.bottom }, context: { connectionId: currentConnectionRef.current?.id || '', database: databaseRef.current, sessionGeneration: connectionSession.current } })
+  }, [])
+  function viewMeasurementData(measurement: string, context: MeasurementActionContext) {
+    if (!canOpenMeasurement(measurement, context) || !currentConnection) return
     setSelectedTable(measurement)
     const next = openMeasurementDataTab(workspaceTabs, { connectionId: currentConnection.id, database, measurement })
     persistWorkspaceTabs(next.tabs)
     selectQueryTab(next.activeId)
   }
-  function createMeasurementQuery(measurement: string) {
-    if (!canOpenMeasurement(measurement)) return
+  function createMeasurementQuery(measurement: string, context: MeasurementActionContext) {
+    if (!canOpenMeasurement(measurement, context)) return
     const id = crypto.randomUUID()
     const next: WorkspaceTab[] = [...workspaceTabs, { kind:'query', id, name:measurement.replace(/_\d{10}$/,'').slice(0,28), sql:generatedMeasurementQuery(measurement) }]
     setSelectedTable(measurement)
     persistWorkspaceTabs(next)
     selectQueryTab(id)
   }
-  async function viewMeasurementSchema(measurement: string) {
-    if (!canOpenMeasurement(measurement)) return
+  async function viewMeasurementSchema(measurement: string, context: MeasurementActionContext) {
+    if (!canOpenMeasurement(measurement, context)) return
     setSelectedTable(measurement)
     const next = await loadSchema(measurement)
-    if (next) setSchemaDialog({measurement, schema:next})
+    if (next && isCurrentMeasurementContext(context)) setSchemaDialog({measurement, schema:next})
   }
 
-  async function loadSchema(table: string, force = false) {
+  const loadSchema = useCallback(async (table: string, force = false) => {
     const requestId = ++schemaRequest.current
-    const key = `${activeConnection}\u0000${database}\u0000${table}`
+    const context: SchemaRequestContext = { connectionId: currentConnectionRef.current?.id || '', database: databaseRef.current, sessionGeneration: connectionSession.current, requestId }
+    if (!context.connectionId || !context.database) return null
+    const key = `${context.connectionId}\u0000${context.database}\u0000${table}`
     if (force) schemaCache.current.delete(key)
     setSchema({ fields: [], tags: [] }); setSchemaLoading(true)
     try {
-      const nextSchema = await resolveSchema(table)
-      if (requestId === schemaRequest.current) { setSchema(nextSchema); toast(`已载入 ${nextSchema.fields.length} 个字段、${nextSchema.tags.length} 个 Tag`) }
+      const nextSchema = await waitForCurrentSchema(() => resolveSchema(table), context, isCurrentSchemaContext)
+      if (!nextSchema) return null
+      setSchema(nextSchema); toast(`已载入 ${nextSchema.fields.length} 个字段、${nextSchema.tags.length} 个 Tag`)
       return nextSchema
     } catch (error) {
-      if (requestId === schemaRequest.current) toast(error instanceof Error ? `字段加载失败：${error.message}` : '字段加载失败')
+      if (isCurrentSchemaContext(context)) toast(error instanceof Error ? `字段加载失败：${error.message}` : '字段加载失败')
       return null
-    } finally { if (requestId === schemaRequest.current) setSchemaLoading(false) }
-  }
+    } finally { if (isCurrentSchemaContext(context)) setSchemaLoading(false) }
+  }, [isCurrentSchemaContext, resolveSchema, toast])
 
   async function refreshSchemaDialog() {
     if (!schemaDialog) return
@@ -481,7 +500,7 @@ export default function App() {
     {currentConnection && <BulkDataWizard open={bulkWizardOpen} connection={currentConnection} connections={connections} databases={databases} database={database} tables={tables} activeJob={activeBulkJob} onConnectionChange={connection => { setActiveConnection(connection.id); save('gdb.activeConnection', connection.id); void connect(connection) }} onDatabaseChange={next => void changeDatabase(next)} onClose={() => setBulkWizardOpen(false)} onJobChange={setActiveBulkJob} onNotify={toast}/>}
     {bulkCloseGuardOpen&&<div className="modal"><div className="dialog"><h2>批量造数仍在运行</h2><p>直接退出会中断尚未写入的批次。已成功写入的数据不会回滚。</p><div className="dialog-actions"><button disabled={bulkExitBusy} onClick={()=>setBulkCloseGuardOpen(false)}>继续运行</button><button className="danger" disabled={bulkExitBusy} onClick={()=>void stopBulkAndExit()}>{bulkExitBusy?'正在停止…':'停止任务并退出'}</button></div></div></div>}
     {schemaDialog&&<SchemaDialog database={database} measurement={schemaDialog.measurement} schema={schemaDialog.schema} loading={schemaLoading} onRefresh={refreshSchemaDialog} onClose={()=>setSchemaDialog(null)} onMessage={toast}/>}
-    {measurementAction&&<MeasurementActionMenu anchor={measurementAction.anchor} measurement={measurementAction.measurement} onViewData={()=>viewMeasurementData(measurementAction.measurement)} onNewQuery={()=>createMeasurementQuery(measurementAction.measurement)} onViewSchema={()=>void viewMeasurementSchema(measurementAction.measurement)} onClose={()=>setMeasurementAction(null)}/>}
+    {measurementAction&&<MeasurementActionMenu anchor={measurementAction.anchor} measurement={measurementAction.measurement} onViewData={()=>viewMeasurementData(measurementAction.measurement,measurementAction.context)} onNewQuery={()=>createMeasurementQuery(measurementAction.measurement,measurementAction.context)} onViewSchema={()=>void viewMeasurementSchema(measurementAction.measurement,measurementAction.context)} onClose={closeMeasurementActions}/>}
     {claudeSettingsOpen&&<ClaudeSettingsDialog settings={claudeSettings} onClose={()=>setClaudeSettingsOpen(false)} onSave={(settings,key)=>{setClaudeSettings(settings);save('gdb.claude.settings',settings);if(key)void saveCredential('claude-api',key);setClaudeSettingsOpen(false);toast('诊断设置已保存')}}/>}
     {tourOpen&&<FeatureTour steps={TOUR_STEPS} onComplete={()=>finishTour('completed')} onSkip={()=>finishTour('skipped')}/>}
     <aside className={`claude-drawer ${claudeOpen ? 'open' : ''}`}><div className="drawer-head"><b>✦ 查询诊断</b><span>{claudeLoading&&<button className="danger" onClick={cancelDiagnosis}>取消</button>}<button onClick={()=>setClaudeSettingsOpen(true)} title="诊断设置">设置</button><button onClick={() => {cancelDiagnosis();setClaudeOpen(false)}}>×</button></span></div><div className="drawer-body">{claudeLoading?<div className="center">正在检查语法、Schema 与性能…</div>:claudeAnswer?<DiagnosisPanel result={claudeAnswer} originalSql={sql} onOpen={openQueryTab} onReplace={fixed=>setSql(fixed)}/>:<div className="center"><div><b>诊断当前 InfluxQL</b><small>仅发送 SQL、错误和 Field/Tag Schema</small></div></div>}</div><footer>{claudeSettings.provider==='cli'?'本地 Claude CLI':'Anthropic API'} · {database||'未连接'}</footer></aside>
