@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { executeMeasurementUpdates, normalizePointUpdate } from './measurement-updates.mjs'
+import { executeMeasurementUpdates, handleMeasurementUpdatesRequest, normalizePointUpdate } from './measurement-updates.mjs'
 
 const schema = {
   tags:['host', 'region'],
@@ -137,4 +137,109 @@ test('writes changed fields together and stops after the first write failure', a
     succeededIds:['point-1'],
     failed:{ id:'point-2', index:1, message:'point write failed' },
   })
+})
+
+test('route handler blocks production before loading schema or writing', async () => {
+  let schemaCalls = 0
+  let writeCalls = 0
+  await assert.rejects(
+    handleMeasurementUpdatesRequest({
+      session:{ environment:'prod' },
+      body:{ database:'metrics', measurement:'cpu', updates:[point] },
+      getMeasurementSchema:async () => { schemaCalls++; return schema },
+      influxWrite:async () => { writeCalls++ },
+    }),
+    error => error.code === 'PRODUCTION_READ_ONLY' && error.status === 403,
+  )
+  assert.equal(schemaCalls, 0)
+  assert.equal(writeCalls, 0)
+})
+
+test('route handler passes route-level target and nanosecond write precision', async () => {
+  const session = { environment:'dev' }
+  const schemaCalls = []
+  const writes = []
+  const result = await handleMeasurementUpdatesRequest({
+    session,
+    body:{ database:'metrics', measurement:'cpu', updates:[{ ...point, id:'route-point' }] },
+    getMeasurementSchema:async (...args) => { schemaCalls.push(args); return schema },
+    influxWrite:async (...args) => writes.push(args),
+  })
+
+  assert.deepEqual(schemaCalls, [[session, 'metrics', 'cpu']])
+  assert.deepEqual(writes, [[
+    session,
+    'metrics',
+    'cpu,host=node1,region=cn-east temperature=27.5 1784995200123456789',
+    { precision:'ns' },
+  ]])
+  assert.deepEqual(result, {
+    summary:{ total:1, succeeded:1, failed:0, skipped:0 },
+    succeededIds:['route-point'],
+    failed:null,
+  })
+})
+
+test('route handler rejects an update-level measurement without writing', async () => {
+  let writes = 0
+  await assert.rejects(
+    handleMeasurementUpdatesRequest({
+      session:{ environment:'dev' },
+      body:{ database:'metrics', measurement:'cpu', updates:[{ ...point, measurement:'other' }] },
+      getMeasurementSchema:async () => schema,
+      influxWrite:async () => { writes++ },
+    }),
+    error => error.code === 'MEASUREMENT_UPDATE_INVALID' && error.status === 400 && error.message === 'measurement must be specified by the request',
+  )
+  assert.equal(writes, 0)
+})
+
+test('route handler rejects missing or empty update ids without writing', async () => {
+  for (const id of [undefined, '']) {
+    let writes = 0
+    await assert.rejects(
+      handleMeasurementUpdatesRequest({
+        session:{ environment:'dev' },
+        body:{ database:'metrics', measurement:'cpu', updates:[{ ...point, id }] },
+        getMeasurementSchema:async () => schema,
+        influxWrite:async () => { writes++ },
+      }),
+      error => error.code === 'MEASUREMENT_UPDATE_INVALID' && error.status === 400 && error.message === 'update id must be a non-empty string',
+    )
+    assert.equal(writes, 0)
+  }
+})
+
+test('route handler maps an invalid measurement schema to a stable upstream error', async () => {
+  await assert.rejects(
+    handleMeasurementUpdatesRequest({
+      session:{ environment:'dev' },
+      body:{ database:'metrics', measurement:'cpu', updates:[point] },
+      getMeasurementSchema:async () => ({ tags:['host'], fields:[{ name:'temperature', type:'unsupported' }] }),
+      influxWrite:async () => assert.fail('unexpected write'),
+    }),
+    error => error.code === 'MEASUREMENT_SCHEMA_INVALID' && error.status === 502 && error.message === 'measurement schema is invalid',
+  )
+})
+
+test('route handler maps CR/LF Line Protocol values to stable update errors', async () => {
+  const invalidBodies = [
+    { database:'metrics', measurement:'cpu\nunsafe', updates:[point] },
+    { database:'metrics', measurement:'cpu', updates:[{ ...point, tags:{ host:'node1\runsafe', region:'cn-east' } }] },
+    { database:'metrics', measurement:'cpu', updates:[{ ...point, fields:{ status:'unsafe\nvalue' } }] },
+  ]
+
+  for (const body of invalidBodies) {
+    let writes = 0
+    await assert.rejects(
+      handleMeasurementUpdatesRequest({
+        session:{ environment:'dev' },
+        body,
+        getMeasurementSchema:async () => schema,
+        influxWrite:async () => { writes++ },
+      }),
+      error => error.code === 'MEASUREMENT_UPDATE_INVALID' && error.status === 400 && error.message === 'point contains an invalid line protocol value',
+    )
+    assert.equal(writes, 0)
+  }
 })

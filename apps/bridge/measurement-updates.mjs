@@ -139,3 +139,14 @@ export async function executeMeasurementUpdates({ session, database, measurement
     failed:null,
   }
 }
+
+export function handleMeasurementUpdatesRequest({ session, body, getMeasurementSchema, influxWrite }) {
+  return executeMeasurementUpdates({
+    session,
+    database:body?.database,
+    measurement:body?.measurement,
+    updates:body?.updates,
+    loadSchema:(database, measurement) => getMeasurementSchema(session, database, measurement),
+    writePoint:line => influxWrite(session, body?.database, line, { precision:'ns' }),
+  })
+}
