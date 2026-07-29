@@ -61,6 +61,35 @@ test('an inactive dirty data tab remains open after a partial submit and closes 
   assert.equal(activeId, 'query-1')
 })
 
+test('a guarded inactive close uses the latest activated tab state for its legal fallback', () => {
+  const tabsBeforeGuard = [
+    { kind: 'query', id: 'query-before', name: 'before', sql: '' },
+    { kind: 'measurement-data', id: 'data-cpu', name: 'cpu · 数据', connectionId: 'c1', database: 'metrics', measurement: 'cpu' },
+    { kind: 'query', id: 'query-after', name: 'after', sql: '' },
+  ]
+
+  const staleClose = tabs.closeWorkspaceTab(tabsBeforeGuard, 'query-after', 'data-cpu')
+  const latestClose = tabs.closeMeasurementTabAfterGuard(tabsBeforeGuard, 'data-cpu', 'data-cpu')
+
+  assert.equal(staleClose.activeId, 'query-after')
+  assert.equal(latestClose.activeId, 'query-before')
+  assert.deepEqual(latestClose.tabs.map(tab => tab.id), ['query-before', 'query-after'])
+})
+
+test('guard behavior keeps partial actions, advances multi-dirty tabs one at a time, and cancel never navigates', async () => {
+  const events = []
+  const first = tabs.queueMeasurementAction(null, true, () => events.push('navigate'))
+
+  assert.equal(await tabs.submitMeasurementAction(first.pending, async () => false), first.pending)
+  assert.deepEqual(events, [])
+  assert.equal(tabs.cancelMeasurementAction(first.pending), null)
+  assert.deepEqual(events, [])
+
+  const second = tabs.queueMeasurementAction(null, true, () => events.push('navigate'))
+  assert.equal(await tabs.submitMeasurementAction(second.pending, async () => true), null)
+  assert.deepEqual(events, ['navigate'])
+})
+
 test('draft state belongs to its data tab and survives the view unmount contract', () => {
   const persisted = tabs.replaceMeasurementTabDrafts({}, 'data-cpu', { request: { field: 'draft' } })
   const afterQueryTabUnmount = persisted
@@ -76,4 +105,19 @@ test('the dialog supplies submit, discard, cancel, and an Escape cancel path', a
   for (const label of ['提交', '放弃', '取消']) assert.match(source, new RegExp(label))
   assert.match(source, /event\.key === 'Escape'/)
   assert.match(source, /onCancel\(\)/)
+})
+
+test('App binds the latest workspace close state and layers connection-save protection above other modals', async () => {
+  const [app, view] = await Promise.all([
+    readFile(new URL('./App.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('./MeasurementDataView.tsx', import.meta.url), 'utf8'),
+  ])
+
+  assert.match(app, /closeMeasurementTabAfterGuard\(workspaceTabsRef\.current, activeWorkspaceTabIdRef\.current, id\)/)
+  assert.match(app, /selectQueryTab\(next\.activeId\)/)
+  assert.match(app, /className="connection-row" onClick=\{\(\) => selectConnection\(connection\)\}/)
+  assert.match(app, /onSave=\{connection => guardAllMeasurementDrafts\(\(\) => \{[\s\S]*persistConnections\(next\)[\s\S]*setConnectionDialog\(null\)/)
+  assert.ok(app.lastIndexOf('<UnsavedMeasurementDialog') > app.lastIndexOf('<DeleteConnectionDialog'))
+  assert.match(view, /onGuardedAction\(tab\.id, hasDrafts, continuation\)/)
+  assert.match(view, /onSubmitReady\(tab\.id, \(\) => submitDraftsRef\.current\(\)\)/)
 })

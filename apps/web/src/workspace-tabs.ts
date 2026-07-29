@@ -30,6 +30,10 @@ export function closeWorkspaceTab(tabs:WorkspaceTab[],activeTabId:string,id:stri
   return {tabs:next,activeId:id===activeTabId?next[Math.max(0,index-1)].id:activeTabId}
 }
 
+export function closeMeasurementTabAfterGuard(tabs: WorkspaceTab[], activeTabId: string, id: string) {
+  return closeWorkspaceTab(tabs, activeTabId, id)
+}
+
 export function measurementTabDrafts(drafts: MeasurementTabDrafts, tabId: string) {
   return drafts[tabId] ?? {}
 }
