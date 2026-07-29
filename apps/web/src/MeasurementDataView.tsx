@@ -4,6 +4,7 @@ import { bridge } from './api'
 import { measurementDataPageForRequest, measurementDataRequestKey, measurementDay, measurementNanosecondsToBeijing, measurementRangeFromBeijingTime, nextMeasurementOffset, normalizeMeasurementDataOptions, type MeasurementDataOptions, type MeasurementDataResult, type ReadyConnectionSession } from './measurement-data'
 import EditableFieldCell from './EditableFieldCell'
 import { applyUpdateResult, setDraftValue, updatesFromDraft, type MeasurementDraftState } from './measurement-editing'
+import { beginSubmission, emptySubmissionState, isCurrentSubmission, resetSubmissionForRequest, submissionCanBegin, type Submission } from './measurement-submission'
 import { ResultGridZoomControls } from './ResultGridZoomControls'
 import { stepGridZoom, useGridZoom } from './result-grid-zoom'
 import type { MeasurementDataWorkspaceTab } from './types'
@@ -37,9 +38,10 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
   const [zoom, setZoom] = useGridZoom()
   const [draftsByRequest, setDraftsByRequest] = useState<Record<string, MeasurementDraftState>>({})
   const [submitting, setSubmitting] = useState(false)
-  const [submitStatus, setSubmitStatus] = useState('')
+  const [submitStatus, setSubmitStatus] = useState<{ message: string; error: boolean } | null>(null)
+  const submissionState = useRef(emptySubmissionState())
+  const submitController = useRef<{ submission: Submission; controller: AbortController } | null>(null)
   const requestKeyRef = useRef(requestKey)
-  const submitController = useRef<AbortController | null>(null)
   requestKeyRef.current = requestKey
 
   useEffect(() => {
@@ -49,7 +51,24 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
     setRangeMode('whole')
   }, [tab.id])
 
-  useEffect(() => () => submitController.current?.abort(), [requestKey])
+  useEffect(() => {
+    const active = submitController.current
+    if (active && active.submission.requestKey !== requestKey) {
+      active.controller.abort()
+      submitController.current = null
+    }
+    submissionState.current = resetSubmissionForRequest(submissionState.current)
+    setSubmitting(false)
+    setSubmitStatus(null)
+    return () => {
+      const current = submitController.current
+      if (!current || current.submission.requestKey !== requestKey) return
+      current.controller.abort()
+      submitController.current = null
+      submissionState.current = resetSubmissionForRequest(submissionState.current)
+      setSubmitting(false)
+    }
+  }, [requestKey])
 
   useEffect(() => {
     if (!requestKey) {
@@ -122,35 +141,40 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
   function discardDrafts() {
     if (!requestKey) return
     setDraftsByRequest(current => ({ ...current, [requestKey]: {} }))
-    setSubmitStatus('')
+    setSubmitStatus(null)
   }
 
   function submitDrafts() {
-    if (!requestKey || !page || submitting || !editable) return
+    if (!requestKey || !page || submitting || !editable || !submissionCanBegin(submissionState.current)) return
     const updates = updatesFromDraft(drafts, points, page.schema)
     if (updates.length === 0) {
-      setSubmitStatus('没有可提交的修改。请刷新后检查仍保留的草稿。')
+      setSubmitStatus({ message: '没有可提交的修改。请刷新后检查仍保留的草稿。', error: true })
       return
     }
-    const submissionKey = requestKey
+    const started = beginSubmission(submissionState.current, requestKey)
+    submissionState.current = started.state
     const controller = new AbortController()
-    submitController.current?.abort()
-    submitController.current = controller
+    submitController.current?.controller.abort()
+    submitController.current = { submission: started.submission, controller }
     setSubmitting(true)
-    setSubmitStatus('')
+    setSubmitStatus(null)
     void bridge.updateMeasurementData({ database: tab.database, measurement: tab.measurement, updates }, controller.signal)
       .then(next => {
-        if (controller.signal.aborted || requestKeyRef.current !== submissionKey) return
-        setDraftsByRequest(current => ({ ...current, [submissionKey]: applyUpdateResult(current[submissionKey] ?? {}, next) }))
-        setSubmitStatus(`成功 ${next.summary.succeeded} 项 · 失败 ${next.summary.failed} 项 · 未执行 ${next.summary.skipped} 项`)
+        if (controller.signal.aborted || !isCurrentSubmission(submissionState.current, started.submission, requestKeyRef.current)) return
+        setDraftsByRequest(current => ({ ...current, [started.submission.requestKey]: applyUpdateResult(current[started.submission.requestKey] ?? {}, next) }))
+        const partial = next.summary.failed > 0 || next.summary.skipped > 0
+        setSubmitStatus({ message: `成功 ${next.summary.succeeded} 项 · 失败 ${next.summary.failed} 项 · 未执行 ${next.summary.skipped} 项${next.failed ? ` · ${next.failed.message}` : ''}`, error: partial })
         setReload(value => value + 1)
       })
       .catch(reason => {
-        if (controller.signal.aborted || requestKeyRef.current !== submissionKey) return
-        setSubmitStatus(reason instanceof Error ? `提交失败：${reason.message}` : '提交失败')
+        if (controller.signal.aborted || !isCurrentSubmission(submissionState.current, started.submission, requestKeyRef.current)) return
+        setSubmitStatus({ message: reason instanceof Error ? `提交失败：${reason.message}` : '提交失败', error: true })
       })
       .finally(() => {
-        if (!controller.signal.aborted && requestKeyRef.current === submissionKey) setSubmitting(false)
+        if (controller.signal.aborted || !isCurrentSubmission(submissionState.current, started.submission, requestKeyRef.current)) return
+        submissionState.current = resetSubmissionForRequest(submissionState.current)
+        if (submitController.current?.submission.token === started.submission.token) submitController.current = null
+        setSubmitting(false)
       })
   }
 
@@ -185,11 +209,11 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
     {rangeMode === 'custom' && <p className="measurement-range-hint">自定义时段按北京自然日 {day?.date ?? '不可用'} 解析，范围不会跨日。</p>}
     {rangeError && <p className="measurement-range-error" role="alert">{rangeError}</p>}
     {error && <div className="measurement-data-error" role="alert"><span>{error}</span><button type="button" onClick={() => setReload(value => value + 1)}>重试</button></div>}
-    {submitStatus && <p className="measurement-submit-status" role="status">{submitStatus}</p>}
+    {submitStatus && <p className="measurement-submit-status" role={submitStatus.error ? 'alert' : 'status'}>{submitStatus.message}</p>}
     <div className="measurement-data-grid" aria-busy={loading}>
       {loading && !page ? <div className="measurement-data-loading">正在读取数据…</div> : <div className="measurement-data-scroll" tabIndex={0} aria-label="Measurement 数据表格"><table>
         <thead><tr><th rowSpan={2} className="pinned">时间<small>精确时间</small></th>{tags.length > 0 && <th colSpan={tags.length}>Tags</th>}{fields.length > 0 && <th colSpan={fields.length}>Fields</th>}</tr><tr>{tags.map(tag => <th key={'tag-' + tag}>{tag}</th>)}{fields.map(field => <th key={'field-' + field.name}>{field.name}<small>{field.type}</small></th>)}</tr></thead>
-        <tbody>{points.map(point => <tr key={point.id}><td className="pinned measurement-time" title={timeTitle(point.time)}>{point.time}</td>{tags.map(tag => <td key={'tag-' + tag}>{point.tags[tag] ?? ''}</td>)}{fields.map(field => <EditableFieldCell key={'field-' + field.name} value={point.fields[field.name] ?? null} field={field} editable={editable} draft={drafts[`${point.id}\u0000${field.name}`]} onChange={value => updateDraft(point, field, value)}/>)}</tr>)}</tbody>
+        <tbody>{points.map(point => <tr key={point.id}><td className="pinned measurement-time" title={timeTitle(point.time)}>{point.time}</td>{tags.map(tag => <td key={'tag-' + tag}>{point.tags[tag] ?? ''}</td>)}{fields.map(field => <EditableFieldCell key={'field-' + field.name} value={point.fields[field.name] ?? null} field={field} editable={editable && !submitting} draft={drafts[`${point.id}\u0000${field.name}`]} onChange={value => updateDraft(point, field, value)}/>)}</tr>)}</tbody>
       </table>{!loading && points.length === 0 && <div className="measurement-data-empty">当前时段没有数据。</div>}</div>}
     </div>
     <footer className="measurement-data-pagination"><span>{loading ? '正在更新…' : '偏移 ' + pageOffset + ' · ' + points.length + ' 行'}</span><div><button type="button" disabled={loading || hasDrafts || pageOffset === 0} onClick={() => movePage(-1)}>上一页</button><button type="button" disabled={loading || hasDrafts || !hasMore} onClick={() => movePage(1)}>下一页</button></div></footer>
