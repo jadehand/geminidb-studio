@@ -8,7 +8,14 @@ export type MeasurementDataWorkspaceTab = { kind:'measurement-data'; id:string; 
 export type WorkspaceTab = QueryWorkspaceTab | MeasurementDataWorkspaceTab
 export type CommandBatchValidation = { statementCount: number; kind: 'write-batch' }
 export type CommandBatchResponse = { summary: { total: number; succeeded: number; failed: number; skipped: number }; failedIndex?: number; error?: string }
-export type MeasurementSchema = { fields: { name: string; type: string }[]; tags: string[] }
+export type MeasurementFieldType = 'integer' | 'float' | 'string' | 'boolean'
+export type MeasurementFieldValue = string | number | boolean
+export type MeasurementSchema = { fields: { name: string; type: MeasurementFieldType }[]; tags: string[] }
+export type MeasurementUpdateResult = {
+  summary: { total: number; succeeded: number; failed: number; skipped: number }
+  succeededIds: string[]
+  failed: { id: string; index: number; message: string } | null
+}
 export type ClaudeSettings = { provider: 'cli'|'api'; cliPath: string; endpoint: string; model: string; maxTokens: number }
 export type ClaudeDiagnosis = { summary: string; problems: { level: 'error'|'warning'|'info'; message: string }[]; fixedSql: string; performanceAdvice: string[]; risk: 'read'|'write'|'danger'; usage?: { inputTokens?: number; outputTokens?: number } }
 
