@@ -80,6 +80,20 @@ test('keeps legacy validation errors at the bulk encoder boundary', () => {
   }), 'GENERATOR_INVALID', 'timestamp must be a safe integer')
 })
 
+test('preserves foreign exceptions that impersonate line protocol validation errors', () => {
+  for (const property of ['measurement', 'tags', 'fields']) {
+    const foreignError = new Error(`${property} getter failed`)
+    foreignError.code = 'LINE_PROTOCOL_INVALID'
+    const point = { timestampMs: 1 }
+    Object.defineProperty(point, property, {
+      get() {
+        throw foreignError
+      },
+    })
+    assert.throws(() => encodeLineProtocol(point), error => error === foreignError)
+  }
+})
+
 test('generates supported field kinds in stable field and tag order', () => {
   const lines = [...iteratePlanLines({
     targets: [{ date: '2026-07-26', measurement: 'm', timestamps: [1, 2] }],

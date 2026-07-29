@@ -1,4 +1,4 @@
-import { encodeLineProtocolPoint } from './line-protocol.mjs'
+import { encodeLineProtocolPoint, isLineProtocolError } from './line-protocol.mjs'
 
 function createError(message, code) {
   const error = new Error(`${code}: ${message}`)
@@ -447,7 +447,7 @@ export function encodeLineProtocol(point) {
       precision: 'ms',
     })
   } catch (error) {
-    if (error?.code === 'LINE_PROTOCOL_INVALID') {
+    if (isLineProtocolError(error)) {
       throw generatorError(error.message.replace(/^LINE_PROTOCOL_INVALID: /, ''))
     }
     throw error

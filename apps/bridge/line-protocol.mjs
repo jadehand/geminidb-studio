@@ -1,7 +1,16 @@
+class LineProtocolError extends Error {
+  constructor(message) {
+    super(`LINE_PROTOCOL_INVALID: ${message}`)
+    this.code = 'LINE_PROTOCOL_INVALID'
+  }
+}
+
 function lineProtocolError(message) {
-  const error = new Error(`LINE_PROTOCOL_INVALID: ${message}`)
-  error.code = 'LINE_PROTOCOL_INVALID'
-  return error
+  return new LineProtocolError(message)
+}
+
+export function isLineProtocolError(error) {
+  return error instanceof LineProtocolError
 }
 
 function requireSafeInteger(value, label) {
