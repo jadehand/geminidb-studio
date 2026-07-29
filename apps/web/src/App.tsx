@@ -28,8 +28,10 @@ import { createWriteExecutionLock, isWriteConfirmationCurrent, isWriteExecutionC
 import WorkspaceTabs from './WorkspaceTabs'
 import MeasurementActionMenu, { type MeasurementActionAnchor } from './MeasurementActionMenu'
 import MeasurementDataView from './MeasurementDataView'
+import UnsavedMeasurementDialog from './UnsavedMeasurementDialog'
 import type { ReadyConnectionSession } from './measurement-data'
-import { closeWorkspaceTab as closeTabs, openMeasurementDataTab } from './workspace-tabs'
+import type { MeasurementDraftState } from './measurement-editing'
+import { cancelMeasurementAction, closeWorkspaceTab as closeTabs, hasMeasurementTabDrafts, measurementTabDrafts, queueMeasurementAction, replaceMeasurementTabDrafts, type MeasurementTabDrafts, type PendingMeasurementAction, openMeasurementDataTab } from './workspace-tabs'
 import { waitForCurrentSchema, type SchemaRequestContext } from './schema-context'
 import type { BulkJobStatus, ClaudeDiagnosis, ClaudeSettings, Connection, Execution, Favorite, MeasurementSchema, QueryRow, QueryWorkspaceTab, WorkspaceTab } from './types'
 const QueryEditor = lazy(() => import('./QueryEditor'))
@@ -38,6 +40,7 @@ const DEFAULT_SQL = 'SHOW DATABASES'
 type SideTool = 'connections' | 'catalog'
 type ResultView = 'result' | 'chart' | 'history' | 'messages' | 'favorites'
 type MeasurementActionContext = Pick<SchemaRequestContext, 'connectionId'|'database'|'sessionGeneration'>
+type MeasurementDraftStore = Record<string, Record<string, MeasurementDraftState>>
 const visibleResultViews: Exclude<ResultView, 'chart'>[] = ['result', 'history', 'messages', 'favorites']
 const visibleResultView = (view: ResultView): ResultView => view === 'chart' ? 'result' : view
 const DEFAULT_TAB: QueryWorkspaceTab = { kind:'query',id: 'query-1', name: '查询 1', sql: DEFAULT_SQL }
@@ -68,6 +71,11 @@ export default function App() {
   const [dayRange, setDayRange] = useState<DayRange>(()=>load('gdb.workspace.dayRange','all'))
   const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceTab[]>(() => { const tabs=migrateWorkspaceTabs(load<unknown>('gdb.queryTabs',[DEFAULT_TAB])); return tabs.length ? tabs : [DEFAULT_TAB] })
   const [activeTabId, setActiveTabId] = useState(() => load('gdb.activeQueryTab','query-1'))
+  const [measurementDraftsByTab, setMeasurementDraftsByTab] = useState<MeasurementDraftStore>({})
+  const [measurementGuardTabId, setMeasurementGuardTabId] = useState<string | null>(null)
+  const [measurementGuardAll, setMeasurementGuardAll] = useState(false)
+  const [measurementGuardSubmitting, setMeasurementGuardSubmitting] = useState(false)
+  const [measurementGuardError, setMeasurementGuardError] = useState('')
   const [rows, setRows] = useState<QueryRow[]>([])
   const [history, setHistory] = useState<Execution[]>(() => load('gdb.history', []))
   const [favorites, setFavorites] = useState<Favorite[]>(() => load('gdb.favorites', []))
@@ -123,7 +131,11 @@ export default function App() {
   const [tourOpen,setTourOpen]=useState(()=>initialTourStatus(load(TOUR_STORAGE_KEY,'new'))==='new')
   const diagnosticAbort=useRef<AbortController|null>(null),diagnosticRequest=useRef(0)
   const activeBulkJobRef=useRef<BulkJobStatus|null>(null)
+  const measurementDraftsRef = useRef<MeasurementDraftStore>(measurementDraftsByTab)
+  const measurementPendingAction = useRef<PendingMeasurementAction>(null)
+  const measurementSubmitters = useRef(new Map<string, () => Promise<boolean>>())
   activeBulkJobRef.current=activeBulkJob
+  measurementDraftsRef.current=measurementDraftsByTab
 
   const currentConnection = connections.find(c => c.id === activeConnection) || connections[0]
   currentConnectionRef.current = currentConnection
@@ -177,10 +189,91 @@ export default function App() {
   function addQueryTab() { const id=crypto.randomUUID(),next:WorkspaceTab[]=[...workspaceTabs,{kind:'query',id,name:`查询 ${workspaceTabs.filter(tab=>tab.kind==='query').length+1}`,sql:''}];persistWorkspaceTabs(next);setActiveTabId(id);save('gdb.activeQueryTab',id) }
   function openQueryTab(command:string) { const id=crypto.randomUUID(),next:WorkspaceTab[]=[...workspaceTabs,{kind:'query',id,name:'诊断修复',sql:command}];persistWorkspaceTabs(next);setActiveTabId(id);save('gdb.activeQueryTab',id);setClaudeOpen(false) }
   function selectQueryTab(id: string) { setActiveTabId(id); save('gdb.activeQueryTab',id) }
-  function closeWorkspaceTab(id: string) { const next=closeTabs(workspaceTabs,activeTabId,id);persistWorkspaceTabs(next.tabs);if(next.activeId!==activeTabId)selectQueryTab(next.activeId) }
+  function setMeasurementDraftsForTab(tabId: string, next: Record<string, MeasurementDraftState> | ((current: Record<string, MeasurementDraftState>) => Record<string, MeasurementDraftState>)) {
+    const current = measurementTabDrafts(measurementDraftsRef.current as MeasurementTabDrafts, tabId) as Record<string, MeasurementDraftState>
+    const resolved = typeof next === 'function' ? next(current) : next
+    const store = replaceMeasurementTabDrafts(measurementDraftsRef.current as MeasurementTabDrafts, tabId, resolved) as MeasurementDraftStore
+    measurementDraftsRef.current = store
+    setMeasurementDraftsByTab(store)
+  }
+  function firstDirtyMeasurementTab() { return workspaceTabs.find(tab => tab.kind === 'measurement-data' && hasMeasurementTabDrafts(measurementDraftsRef.current as MeasurementTabDrafts, tab.id))?.id ?? null }
+  function clearMeasurementGuard() { measurementPendingAction.current = null; setMeasurementGuardTabId(null); setMeasurementGuardAll(false); setMeasurementGuardSubmitting(false); setMeasurementGuardError('') }
+  function requestMeasurementAction(tabId: string, hasDrafts: boolean, continuation: () => void, requireAll = false) {
+    const queued = queueMeasurementAction(measurementPendingAction.current, hasDrafts, continuation)
+    measurementPendingAction.current = queued.pending
+    if (!queued.guarded || !queued.pending) return
+    setMeasurementGuardTabId(current => current ?? tabId)
+    setMeasurementGuardAll(current => current || requireAll)
+  }
+  function guardAllMeasurementDrafts(continuation: () => void) {
+    const dirtyTabId = firstDirtyMeasurementTab()
+    if (!dirtyTabId) { continuation(); return }
+    if (dirtyTabId !== activeTabId) selectQueryTab(dirtyTabId)
+    requestMeasurementAction(dirtyTabId, true, continuation, true)
+  }
+  function registerMeasurementSubmitter(tabId: string, submit: (() => Promise<boolean>) | null) {
+    if (submit) measurementSubmitters.current.set(tabId, submit)
+    else measurementSubmitters.current.delete(tabId)
+  }
+  async function submitGuardedMeasurementDrafts() {
+    const tabId = measurementGuardTabId
+    const pending = measurementPendingAction.current
+    const submit = tabId ? measurementSubmitters.current.get(tabId) : null
+    if (!pending || !tabId || !submit) { setMeasurementGuardError('无法提交当前修改。请取消本次操作后重试。'); return }
+    setMeasurementGuardSubmitting(true)
+    setMeasurementGuardError('')
+    const resolved = await submit()
+    setMeasurementGuardSubmitting(false)
+    if (!resolved) { setMeasurementGuardError('仍有未提交的修改。请处理成功后再继续，或选择放弃。'); return }
+    if (measurementGuardAll) {
+      const nextDirtyTabId = firstDirtyMeasurementTab()
+      if (nextDirtyTabId) {
+        if (nextDirtyTabId !== activeTabId) selectQueryTab(nextDirtyTabId)
+        setMeasurementGuardTabId(nextDirtyTabId)
+        setMeasurementGuardError('还有其他数据页签存在未提交修改。')
+        return
+      }
+    }
+    pending()
+    clearMeasurementGuard()
+  }
+  function discardGuardedMeasurementDrafts() {
+    const pending = measurementPendingAction.current
+    const tabId = measurementGuardTabId
+    if (!pending || !tabId) return clearMeasurementGuard()
+    setMeasurementDraftsForTab(tabId, {})
+    if (measurementGuardAll) {
+      const nextDirtyTabId = firstDirtyMeasurementTab()
+      if (nextDirtyTabId) {
+        if (nextDirtyTabId !== activeTabId) selectQueryTab(nextDirtyTabId)
+        setMeasurementGuardTabId(nextDirtyTabId)
+        setMeasurementGuardError('还有其他数据页签存在未提交修改。')
+        return
+      }
+    }
+    pending()
+    measurementPendingAction.current = null
+    clearMeasurementGuard()
+  }
+  function cancelGuardedMeasurementDrafts() { measurementPendingAction.current = cancelMeasurementAction(measurementPendingAction.current); clearMeasurementGuard() }
+  function closeWorkspaceTab(id: string) {
+    const tab = workspaceTabs.find(item => item.id === id)
+    const close = () => {
+      const next=closeTabs(workspaceTabs,activeTabId,id)
+      persistWorkspaceTabs(next.tabs)
+      setMeasurementDraftsForTab(id, {})
+      if(next.activeId!==activeTabId)selectQueryTab(next.activeId)
+    }
+    if (tab?.kind === 'measurement-data' && hasMeasurementTabDrafts(measurementDraftsRef.current as MeasurementTabDrafts, id)) {
+      if (id !== activeTabId) selectQueryTab(id)
+      requestMeasurementAction(id, true, close)
+      return
+    }
+    close()
+  }
   function renameQueryTab(id: string) { const current=workspaceTabs.find(tab=>tab.id===id);if(!current||current.kind!=='query')return;const name=window.prompt('查询页签名称',current.name)?.trim();if(name)persistWorkspaceTabs(workspaceTabs.map(tab=>tab.kind==='query'&&tab.id===id?{...tab,name}:tab)) }
   function persistConnections(next: Connection[]) { const normalized=next.map(normalizeConnectionWritePolicy); setConnections(normalized); normalized.forEach(connection => { if (connection.password) void saveCredential(connection.id,connection.password) }); save('gdb.connections', normalized.map(connection => ({ ...connection, password: '' }))); return normalized }
-  function confirmDeleteConnection() {
+  function confirmDeleteConnectionNow() {
     const connection = connectionPendingDelete
     if (!connection) return
     const next = connections.filter(item => item.id !== connection.id)
@@ -195,11 +288,12 @@ export default function App() {
       if (next[0]) void connect(next[0])
     }
   }
+  function confirmDeleteConnection() { guardAllMeasurementDrafts(confirmDeleteConnectionNow) }
   function switchTool(tool: SideTool) { if (tool === sideTool && sideOpen) { setSideOpen(false); save('gdb.sideOpen', false); return } setSideTool(tool); setSideOpen(true); save('gdb.sideTool', tool); save('gdb.sideOpen', true) }
   function resizeSidebarBy(next:number){const width=fitSidebarWidth(next);setSidebarWidth(width);save('gdb.sidebarWidth',width)}
   function beginSidebarResize(event:React.PointerEvent<HTMLButtonElement>){event.preventDefault();const origin=event.clientX,start=sidebarWidth;setSidebarDragging(true);const move=(next:PointerEvent)=>setSidebarWidth(fitSidebarWidth(start+next.clientX-origin));const stop=(next:PointerEvent)=>{const width=fitSidebarWidth(start+next.clientX-origin);setSidebarWidth(width);save('gdb.sidebarWidth',width);setSidebarDragging(false);window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',stop)};window.addEventListener('pointermove',move);window.addEventListener('pointerup',stop)}
 
-  async function connect(connection = currentConnection) {
+  async function connectNow(connection = currentConnection) {
     const sessionGeneration = invalidateConnectionSession()
     if (!connection) return
     invalidateWriteContext()
@@ -246,7 +340,7 @@ export default function App() {
       setActiveConnection(currentConnection.id)
       save('gdb.activeConnection', currentConnection.id)
     }
-    if (currentConnection.autoLogin) void connect(currentConnection)
+    if (currentConnection.autoLogin) void connectNow(currentConnection)
   }, [])
   useEffect(()=>{
     const close=(event:BeforeUnloadEvent)=>{if(isUnfinishedBulkJob(activeBulkJobRef.current?.status)){event.preventDefault();event.returnValue='';return}endSession()}
@@ -286,7 +380,7 @@ export default function App() {
     await destroyDesktopWindow()
   }
 
-  async function changeDatabase(next: string) {
+  async function changeDatabaseNow(next: string) {
     if (!next || next === database) return
     dismissDatabaseHint()
     const started = performance.now()
@@ -316,6 +410,16 @@ export default function App() {
     toast(`无法打开 ${measurement}：请先选择有效的连接和 Database`)
     return false
   }
+  function changeDatabase(next: string) { if (!next || next === database) return; guardAllMeasurementDrafts(() => { void changeDatabaseNow(next) }) }
+  function connect(connection = currentConnection) {
+    const switching = Boolean(connection && connection.id !== currentConnection?.id)
+    if (switching) { setActiveConnection(currentConnection?.id || ''); save('gdb.activeConnection', currentConnection?.id || '') }
+    guardAllMeasurementDrafts(() => {
+      if (switching && connection) { setActiveConnection(connection.id); save('gdb.activeConnection', connection.id) }
+      void connectNow(connection)
+    })
+  }
+  function selectConnection(connection: Connection) { guardAllMeasurementDrafts(() => { setActiveConnection(connection.id); save('gdb.activeConnection', connection.id); void connectNow(connection) }) }
   const closeMeasurementActions = useCallback((restoreFocus = false) => {
     const trigger = measurementActionTrigger.current
     measurementActionTrigger.current = null
@@ -502,16 +606,17 @@ export default function App() {
 
     <main><section className="editor" data-tour="query-editor"><div className="editor-head"><div><h1>{activeQueryTab?'查询窗口':'数据窗口'}</h1><span className="context">{database||'未连接'} / {selectedTable || '未选表'}</span>{selectedTable&&<button className="schema-refresh" disabled={schemaLoading} onClick={()=>void loadSchema(selectedTable,true)} title="刷新当前 Measurement 的 Field 和 Tag">{schemaLoading?'… Schema':'↻ Schema'}</button>}</div>{activeQueryTab&&<div className="actions"><button className="claude wide-query-action" onClick={() => void askClaude()}>✦ 诊断查询</button><button className="wide-query-action" onClick={saveFavorite}>☆ 收藏语句</button><details className="action-menu query-more"><summary>更多 ⋯</summary><div><button onClick={() => void askClaude()}>✦ 诊断查询</button><button onClick={saveFavorite}>☆ 收藏语句</button></div></details><button data-tour="execute-query" className={running ? 'danger' : 'primary'} onClick={running ? cancelQuery : () => void runQuery()}>{running ? '■ 取消查询' : '▶ 执行命令'}</button></div>}</div><WorkspaceTabs tabs={workspaceTabs} activeTabId={activeTabId} onSelect={selectQueryTab} onClose={closeWorkspaceTab} onAddQuery={addQueryTab} onRenameQuery={renameQueryTab}/>{activeQueryTab?<Suspense fallback={<div className="editor-loading">正在加载 InfluxQL 编辑器…</div>}><QueryEditor key={`${activeQueryTab.id}:${database}`} tabId={activeQueryTab.id} value={sql} measurements={tables} selectedMeasurement={selectedTable} schema={schema} resolveSchema={resolveSchema} theme={resolvedTheme} onChange={setSql} onRun={command=>void runQuery(command)} onOpenSchema={(measurement,nextSchema)=>setSchemaDialog({measurement,schema:nextSchema})}/></Suspense>:<div className="editor-loading">数据视图将在下一步提供。</div>}</section>
       <section className="results" data-tour="query-results"><div className="result-tabs" data-tour="result-actions"><div>{visibleResultViews.map(item => <button key={item} className={view === item ? 'active' : ''} onClick={() => setView(item)}>{({result:'执行结果',history:`执行记录 ${history.length}`,messages:'交互消息',favorites:`收藏 ${favorites.length}`})[item]}</button>)}</div>{view === 'result' && <div className="result-actions"><button onClick={() => void copyResults()}>复制</button><button className="wide-export-action" onClick={exportCsv}>CSV</button><button className="wide-export-action" onClick={exportExcel}>Excel</button><button className="wide-export-action" onClick={exportJson}>JSON</button><button className="wide-export-action" onClick={()=>void selectExportDirectory()} title={exportDirectory||'系统下载目录'}>目录</button><details className="action-menu export-menu"><summary>导出 ▾</summary><div><button onClick={exportCsv}>导出 CSV</button><button onClick={exportExcel}>导出 Excel</button><button onClick={exportJson}>导出 JSON</button><button onClick={()=>void selectExportDirectory()} title={exportDirectory||'系统下载目录'}>选择导出目录…</button>{exportDirectory&&<button onClick={resetExportDirectory}>恢复系统下载目录</button>}</div></details></div>}</div><div className="result-body"><ResultContent view={view} rows={rows} history={history} favorites={favorites} onUseSql={value => { setSql(value); setView('result') }} onRestoreSql={value=>{setSql(value);toast('已放入当前查询窗口')}} onRemoveFavorite={id => { const next = favorites.filter(f => f.id !== id); setFavorites(next); save('gdb.favorites', next) }}/></div><div className="statusbar"><b className={resultStatus === 'ERROR' ? 'danger' : ''}>{resultStatus}</b><span>{resultMeta}</span></div></section>
-       {activeMeasurementDataTab && <MeasurementDataView tab={activeMeasurementDataTab} readyConnectionSession={readyConnectionSession} currentDatabase={database}/>}
+       {activeMeasurementDataTab && <MeasurementDataView tab={activeMeasurementDataTab} readyConnectionSession={readyConnectionSession} currentDatabase={database} draftsByRequest={measurementTabDrafts(measurementDraftsByTab as MeasurementTabDrafts, activeMeasurementDataTab.id) as Record<string, MeasurementDraftState>} onDraftsByRequestChange={next => setMeasurementDraftsForTab(activeMeasurementDataTab.id, next)} onGuardedAction={requestMeasurementAction} onSubmitReady={registerMeasurementSubmitter}/>}
     </main>
 
-    {connectionDialog && <ConnectionDialog connection={connectionDialog} onClose={() => setConnectionDialog(null)} onSave={connection => { const next = connections.some(c => c.id === connection.id) ? connections.map(c => c.id === connection.id ? connection : c) : [connection, ...connections]; persistConnections(next); setActiveConnection(connection.id); save('gdb.activeConnection', connection.id); setConnectionDialog(null); void connect(connection) }} onDuplicate={connection=>{const copy={...connection,id:crypto.randomUUID(),name:`${connection.name} 副本`};persistConnections([copy,...connections]);setConnectionDialog(copy)}} onDelete={connection=>{setConnectionDialog(null);setConnectionPendingDelete(connection)}}/>}
+    {measurementGuardTabId && <UnsavedMeasurementDialog submitting={measurementGuardSubmitting} error={measurementGuardError} onSubmit={() => void submitGuardedMeasurementDrafts()} onDiscard={discardGuardedMeasurementDrafts} onCancel={cancelGuardedMeasurementDrafts}/>}
+    {connectionDialog && <ConnectionDialog connection={connectionDialog} onClose={() => setConnectionDialog(null)} onSave={connection => { const next = connections.some(c => c.id === connection.id) ? connections.map(c => c.id === connection.id ? connection : c) : [connection, ...connections]; persistConnections(next); setConnectionDialog(null); selectConnection(connection) }} onDuplicate={connection=>{const copy={...connection,id:crypto.randomUUID(),name:`${connection.name} 副本`};persistConnections([copy,...connections]);setConnectionDialog(copy)}} onDelete={connection=>{setConnectionDialog(null);setConnectionPendingDelete(connection)}}/>}
     {connectionPendingDelete && <DeleteConnectionDialog connection={connectionPendingDelete} onCancel={() => setConnectionPendingDelete(null)} onConfirm={confirmDeleteConnection}/>}
     {writeConfirmation && <WriteCommandDialog database={writeConfirmation.database} statementCount={writeConfirmation.statementCount} executing={running} onCancel={() => setWriteConfirmation(null)} onConfirm={() => void executeWriteCommand()}/>}
     {favoriteDialog&&<FavoriteDialog database={database} sql={sql} onClose={()=>setFavoriteDialog(false)} onSave={confirmFavorite}/>}
     {recoveryOpen&&<div className="modal"><div className="dialog recovery-dialog"><h2>恢复查询工作区</h2><p>检测到上次未正常关闭。可以恢复查询页签和目录位置；不会自动执行 SQL。</p><div className="dialog-actions"><button onClick={discardWorkspace}>重新开始</button><button className="primary" onClick={restoreWorkspace}>恢复工作区</button></div></div></div>}
     {timeDialog && <TimeDialog onClose={() => setTimeDialog(false)}/>} 
-    {currentConnection && <BulkDataWizard open={bulkWizardOpen} connection={currentConnection} connections={connections} databases={databases} database={database} tables={tables} activeJob={activeBulkJob} onConnectionChange={connection => { setActiveConnection(connection.id); save('gdb.activeConnection', connection.id); void connect(connection) }} onDatabaseChange={next => void changeDatabase(next)} onClose={() => setBulkWizardOpen(false)} onJobChange={setActiveBulkJob} onNotify={toast}/>}
+    {currentConnection && <BulkDataWizard open={bulkWizardOpen} connection={currentConnection} connections={connections} databases={databases} database={database} tables={tables} activeJob={activeBulkJob} onConnectionChange={selectConnection} onDatabaseChange={changeDatabase} onClose={() => setBulkWizardOpen(false)} onJobChange={setActiveBulkJob} onNotify={toast}/>}
     {bulkCloseGuardOpen&&<div className="modal"><div className="dialog"><h2>批量造数仍在运行</h2><p>直接退出会中断尚未写入的批次。已成功写入的数据不会回滚。</p><div className="dialog-actions"><button disabled={bulkExitBusy} onClick={()=>setBulkCloseGuardOpen(false)}>继续运行</button><button className="danger" disabled={bulkExitBusy} onClick={()=>void stopBulkAndExit()}>{bulkExitBusy?'正在停止…':'停止任务并退出'}</button></div></div></div>}
     {schemaDialog&&<SchemaDialog database={database} measurement={schemaDialog.measurement} schema={schemaDialog.schema} loading={schemaLoading} onRefresh={refreshSchemaDialog} onClose={()=>setSchemaDialog(null)} onMessage={toast}/>}
     {measurementAction&&<MeasurementActionMenu anchor={measurementAction.anchor} measurement={measurementAction.measurement} onViewData={()=>viewMeasurementData(measurementAction.measurement,measurementAction.context)} onNewQuery={()=>createMeasurementQuery(measurementAction.measurement,measurementAction.context)} onViewSchema={()=>void viewMeasurementSchema(measurementAction.measurement,measurementAction.context)} onClose={closeMeasurementActions}/>}

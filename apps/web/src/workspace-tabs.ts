@@ -1,5 +1,8 @@
 import type { MeasurementDataWorkspaceTab, QueryWorkspaceTab, WorkspaceTab } from './types'
 
+export type PendingMeasurementAction = null | (() => void)
+export type MeasurementTabDrafts = Record<string, Record<string, unknown>>
+
 export type MeasurementDataTabContext = Pick<MeasurementDataWorkspaceTab,'connectionId'|'database'|'measurement'>
 
 function measurementDataTabId(context:MeasurementDataTabContext){return `measurement-data:${JSON.stringify([context.connectionId,context.database,context.measurement])}`}
@@ -25,4 +28,45 @@ export function closeWorkspaceTab(tabs:WorkspaceTab[],activeTabId:string,id:stri
   }
   const next=tabs.filter(tab=>tab.id!==id)
   return {tabs:next,activeId:id===activeTabId?next[Math.max(0,index-1)].id:activeTabId}
+}
+
+export function measurementTabDrafts(drafts: MeasurementTabDrafts, tabId: string) {
+  return drafts[tabId] ?? {}
+}
+
+export function hasMeasurementTabDrafts(drafts: MeasurementTabDrafts, tabId: string) {
+  return Object.values(measurementTabDrafts(drafts, tabId)).some(request => request !== null && typeof request === 'object' && Object.keys(request).length > 0)
+}
+
+export function replaceMeasurementTabDrafts(drafts: MeasurementTabDrafts, tabId: string, next: Record<string, unknown>): MeasurementTabDrafts {
+  if (Object.keys(next).length === 0) {
+    const { [tabId]: _removed, ...rest } = drafts
+    return rest
+  }
+  return { ...drafts, [tabId]: next }
+}
+
+export function queueMeasurementAction(pending: PendingMeasurementAction, hasDrafts: boolean, continuation: () => void) {
+  if (pending) return { pending, guarded: true, replaced: false }
+  if (!hasDrafts) {
+    continuation()
+    return { pending: null as PendingMeasurementAction, guarded: false, replaced: false }
+  }
+  return { pending: continuation, guarded: true, replaced: false }
+}
+
+export async function submitMeasurementAction(pending: PendingMeasurementAction, submit: () => Promise<boolean>) {
+  if (!pending || !await submit()) return pending
+  pending()
+  return null
+}
+
+export function discardMeasurementAction(pending: PendingMeasurementAction, discard: () => void) {
+  discard()
+  pending?.()
+  return null
+}
+
+export function cancelMeasurementAction(_pending: PendingMeasurementAction) {
+  return null
 }
