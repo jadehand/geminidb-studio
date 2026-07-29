@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { bridge, BridgeError } from './api'
 import { load, save } from './storage'
 import { deleteCredential, loadCredential, saveCredential } from './credentials'
-import { dayTablePrefix, filterDayTables, multiTableQuery, type DayRange } from './day-tables'
+import { dayTablePrefix, filterDayTables, type DayRange } from './day-tables'
 import ResultsTable from './ResultsTable'
 import { inspectInfluxQL, lineDiff, localFix } from './diagnostics'
 import { beginSession, clearWorkspace, endSession, migrateWorkspaceTabs, readWorkspace, writeWorkspace } from './workspace'
@@ -26,7 +26,8 @@ import WriteCommandDialog from './WriteCommandDialog'
 import { formatCommandSummary, isWriteScript } from './write-command'
 import { createWriteExecutionLock, isWriteConfirmationCurrent, isWriteExecutionCurrent, type WriteConfirmation } from './write-command-guard'
 import WorkspaceTabs from './WorkspaceTabs'
-import { closeWorkspaceTab as closeTabs } from './workspace-tabs'
+import MeasurementActionMenu, { type MeasurementActionAnchor } from './MeasurementActionMenu'
+import { closeWorkspaceTab as closeTabs, openMeasurementDataTab } from './workspace-tabs'
 import type { BulkJobStatus, ClaudeDiagnosis, ClaudeSettings, Connection, Execution, Favorite, MeasurementSchema, QueryRow, QueryWorkspaceTab, WorkspaceTab } from './types'
 const QueryEditor = lazy(() => import('./QueryEditor'))
 
@@ -57,6 +58,7 @@ export default function App() {
   const [databaseOpen, setDatabaseOpen] = useState(true)
   const [measurementsOpen, setMeasurementsOpen] = useState(true)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set())
+  const [measurementAction, setMeasurementAction] = useState<{measurement:string;anchor:MeasurementActionAnchor}|null>(null)
   const [filter, setFilter] = useState('')
   const [dayRange, setDayRange] = useState<DayRange>(()=>load('gdb.workspace.dayRange','all'))
   const [workspaceTabs, setWorkspaceTabs] = useState<WorkspaceTab[]>(() => { const tabs=migrateWorkspaceTabs(load<unknown>('gdb.queryTabs',[DEFAULT_TAB])); return tabs.length ? tabs : [DEFAULT_TAB] })
@@ -286,10 +288,36 @@ export default function App() {
     void changeDatabase(next)
   }
 
-  async function chooseTable(table: string) {
-    setSelectedTable(table)
-    if(activeQueryTab)persistWorkspaceTabs(workspaceTabs.map(tab => tab.kind==='query'&&tab.id === activeQueryTab.id ? {...tab,name:table.replace(/_\d{10}$/,'').slice(0,28),sql:`SELECT *\nFROM "${table}"\nWHERE time >= now() - 1h\nORDER BY time DESC\nLIMIT 100`} : tab))
-    await loadSchema(table)
+  function generatedMeasurementQuery(table: string) { return `SELECT *\nFROM "${table}"\nWHERE time >= now() - 1h\nORDER BY time DESC\nLIMIT 100` }
+  function canOpenMeasurement(measurement: string) {
+    if (currentConnection && database) return true
+    toast(`无法打开 ${measurement}：请先选择有效的连接和 Database`)
+    return false
+  }
+  function openMeasurementActions(measurement: string, trigger: HTMLElement, x?: number, y?: number) {
+    const rect = trigger.getBoundingClientRect()
+    setMeasurementAction({ measurement, anchor: { x: x ?? rect.left + 20, y: y ?? rect.bottom } })
+  }
+  function viewMeasurementData(measurement: string) {
+    if (!canOpenMeasurement(measurement) || !currentConnection) return
+    setSelectedTable(measurement)
+    const next = openMeasurementDataTab(workspaceTabs, { connectionId: currentConnection.id, database, measurement })
+    persistWorkspaceTabs(next.tabs)
+    selectQueryTab(next.activeId)
+  }
+  function createMeasurementQuery(measurement: string) {
+    if (!canOpenMeasurement(measurement)) return
+    const id = crypto.randomUUID()
+    const next: WorkspaceTab[] = [...workspaceTabs, { kind:'query', id, name:measurement.replace(/_\d{10}$/,'').slice(0,28), sql:generatedMeasurementQuery(measurement) }]
+    setSelectedTable(measurement)
+    persistWorkspaceTabs(next)
+    selectQueryTab(id)
+  }
+  async function viewMeasurementSchema(measurement: string) {
+    if (!canOpenMeasurement(measurement)) return
+    setSelectedTable(measurement)
+    const next = await loadSchema(measurement)
+    if (next) setSchemaDialog({measurement, schema:next})
   }
 
   async function loadSchema(table: string, force = false) {
@@ -314,7 +342,6 @@ export default function App() {
   }
 
   function toggleGroup(prefix: string) { setCollapsedGroups(current => { const next=new Set(current);if(next.has(prefix))next.delete(prefix);else next.add(prefix);return next }) }
-  function queryGroup(prefix: string, group: string[]) { if(!activeQueryTab)return;const command=multiTableQuery(group);if(!command)return toast('当前日期范围没有天表');setSql(command);toast(`已生成 ${prefix} 的 ${group.length} 张天表查询`) }
   function addHistory(command: string, duration: number, executionStatus: Execution['status'], result: string, db = database) {
     setHistory(previous => { const next = [{ id: crypto.randomUUID(), executedAt: Date.now(), sql: command, durationMs: Math.round(duration), status: executionStatus, result, database: db }, ...previous].slice(0, 100); save('gdb.history', next); return next })
   }
@@ -437,7 +464,7 @@ export default function App() {
 
     <aside className="left-sidebar"><nav className="tool-rail" aria-label="工具窗口"><button className={sideOpen && sideTool === 'connections' ? 'active' : ''} onClick={() => switchTool('connections')} title="连接"><UiIcon name="connection"/></button><button data-tour="catalog" className={sideOpen && sideTool === 'catalog' ? 'active' : ''} onClick={() => switchTool('catalog')} title="数据目录"><UiIcon name="catalog"/></button></nav>
       <div className="side-content">{sideTool === 'connections' ? <section className="side-panel"><PanelTitle title="连接" count={connections.length} action={<button className="panel-add" data-tour="new-connection" onClick={() => setConnectionDialog({...NEW_INFLUX_CONNECTION})}><span>＋</span> 新建</button>}/><div className="panel-scroll connection-list">{!connections.length&&<Empty text="尚未添加连接" sub="点击右上角“新建”开始连接 GeminiDB"/>}{connections.map(connection => <div key={connection.id} className={`connection-item ${connection.id === activeConnection ? 'active' : ''}`}><button className="connection-row" onClick={() => { setActiveConnection(connection.id); save('gdb.activeConnection', connection.id); void connect(connection) }}><span className="connection-glyph"><UiIcon name="connection"/></span><span><b>{connection.name}</b><small>{connection.endpoint}</small></span></button><button className="connection-more" onClick={() => setConnectionDialog(connection)} aria-label={`编辑 ${connection.name}`} title="编辑连接">•••</button></div>)}</div></section> :
-      <section className="side-panel"><PanelTitle title="数据目录" count={databases.length}/><div className="catalog-tools"><small>{database||'未连接'}<span>·</span>{filteredTables.length} 张天表</small><select value={dayRange} onChange={event=>setDayRange(event.target.value as DayRange)} title="按日期筛选"><option value="all">全部</option><option value="today">今天</option><option value="yesterday">昨天</option><option value="7d">近7天</option></select><button onClick={() => void connect()} title="刷新数据目录">↻</button></div><div className="search"><span><UiIcon name="search"/></span><input value={filter} onChange={e => setFilter(e.target.value)} placeholder="筛选 Measurement 或表名"/></div><div className="tree">{databases.map(db=>{const active=db===database;const open=active&&databaseOpen;return <div key={db} className="database-node"><button className={`tree-row tree-toggle database-row ${active?'selected':''}`} aria-expanded={open} onClick={()=>chooseDatabaseNode(db)} title={db}><UiIcon name="chevron" open={open}/><UiIcon name="database"/><b>{db}</b><em>{active?'当前':'Database'}</em></button>{open&&<><button className="tree-row level-1 tree-toggle" aria-expanded={measurementsOpen} onClick={()=>setMeasurementsOpen(value=>!value)}><UiIcon name="chevron" open={measurementsOpen}/><UiIcon name="layers"/><b>Measurements</b><em>{filteredTables.length}</em></button>{measurementsOpen&&Object.entries(tableGroups).map(([prefix, group]) => {const groupOpen=!collapsedGroups.has(prefix);return <div key={prefix}><button className="tree-row level-2 tree-toggle" aria-expanded={groupOpen} onClick={()=>toggleGroup(prefix)} onDoubleClick={()=>queryGroup(prefix,group)} title={`${prefix} · 双击生成当前日期范围的多天表查询`}><UiIcon name="chevron" open={groupOpen}/><UiIcon name="table"/><b>{prefix}</b><em>{group.length}</em></button>{groupOpen&&group.toSorted().reverse().map(table => { const parsed = splitTable(table); return <button key={table} title={table} onClick={() => void chooseTable(table)} className={`tree-row table-row level-3 ${table === selectedTable ? 'selected' : ''}`}><span className="tree-guide"/><span><b>{day(parsed.timestamp)}</b><small>{table}</small></span></button> })}</div>})}</>}</div>})}</div></section>}</div>
+      <section className="side-panel"><PanelTitle title="数据目录" count={databases.length}/><div className="catalog-tools"><small>{database||'未连接'}<span>·</span>{filteredTables.length} 张天表</small><select value={dayRange} onChange={event=>setDayRange(event.target.value as DayRange)} title="按日期筛选"><option value="all">全部</option><option value="today">今天</option><option value="yesterday">昨天</option><option value="7d">近7天</option></select><button onClick={() => void connect()} title="刷新数据目录">↻</button></div><div className="search"><span><UiIcon name="search"/></span><input value={filter} onChange={e => setFilter(e.target.value)} placeholder="筛选 Measurement 或表名"/></div><div className="tree">{databases.map(db=>{const active=db===database;const open=active&&databaseOpen;return <div key={db} className="database-node"><button className={`tree-row tree-toggle database-row ${active?'selected':''}`} aria-expanded={open} onClick={()=>chooseDatabaseNode(db)} title={db}><UiIcon name="chevron" open={open}/><UiIcon name="database"/><b>{db}</b><em>{active?'当前':'Database'}</em></button>{open&&<><button className="tree-row level-1 tree-toggle" aria-expanded={measurementsOpen} onClick={()=>setMeasurementsOpen(value=>!value)}><UiIcon name="chevron" open={measurementsOpen}/><UiIcon name="layers"/><b>Measurements</b><em>{filteredTables.length}</em></button>{measurementsOpen&&Object.entries(tableGroups).map(([prefix, group]) => {const groupOpen=!collapsedGroups.has(prefix);return <div key={prefix}><button className="tree-row level-2 tree-toggle" aria-expanded={groupOpen} onClick={()=>toggleGroup(prefix)}><UiIcon name="chevron" open={groupOpen}/><UiIcon name="table"/><b>{prefix}</b><em>{group.length}</em></button>{groupOpen&&group.toSorted().reverse().map(table => { const parsed = splitTable(table); return <button key={table} title={table} onClick={event => openMeasurementActions(table, event.currentTarget)} onContextMenu={event => { event.preventDefault(); openMeasurementActions(table, event.currentTarget, event.clientX, event.clientY) }} className={`tree-row table-row level-3 ${table === selectedTable ? 'selected' : ''}`}><span className="tree-guide"/><span><b>{day(parsed.timestamp)}</b><small>{table}</small></span></button> })}</div>})}</>}</div>})}</div></section>}</div>
     </aside>
     <button className={`sidebar-resizer ${sidebarDragging?'dragging':''}`} type="button" role="separator" aria-label="调整数据目录宽度" aria-orientation="vertical" aria-valuemin={MIN_SIDEBAR_WIDTH} aria-valuemax={MAX_SIDEBAR_WIDTH} aria-valuenow={sidebarWidth} onPointerDown={beginSidebarResize} onDoubleClick={()=>resizeSidebarBy(DEFAULT_SIDEBAR_WIDTH)} onKeyDown={event=>{if(event.key==='ArrowLeft'){event.preventDefault();resizeSidebarBy(sidebarWidth-16)}if(event.key==='ArrowRight'){event.preventDefault();resizeSidebarBy(sidebarWidth+16)}if(event.key==='Home'){event.preventDefault();resizeSidebarBy(MIN_SIDEBAR_WIDTH)}if(event.key==='End'){event.preventDefault();resizeSidebarBy(MAX_SIDEBAR_WIDTH)}}} title="拖动调整宽度，双击恢复默认"/>
 
@@ -454,6 +481,7 @@ export default function App() {
     {currentConnection && <BulkDataWizard open={bulkWizardOpen} connection={currentConnection} connections={connections} databases={databases} database={database} tables={tables} activeJob={activeBulkJob} onConnectionChange={connection => { setActiveConnection(connection.id); save('gdb.activeConnection', connection.id); void connect(connection) }} onDatabaseChange={next => void changeDatabase(next)} onClose={() => setBulkWizardOpen(false)} onJobChange={setActiveBulkJob} onNotify={toast}/>}
     {bulkCloseGuardOpen&&<div className="modal"><div className="dialog"><h2>批量造数仍在运行</h2><p>直接退出会中断尚未写入的批次。已成功写入的数据不会回滚。</p><div className="dialog-actions"><button disabled={bulkExitBusy} onClick={()=>setBulkCloseGuardOpen(false)}>继续运行</button><button className="danger" disabled={bulkExitBusy} onClick={()=>void stopBulkAndExit()}>{bulkExitBusy?'正在停止…':'停止任务并退出'}</button></div></div></div>}
     {schemaDialog&&<SchemaDialog database={database} measurement={schemaDialog.measurement} schema={schemaDialog.schema} loading={schemaLoading} onRefresh={refreshSchemaDialog} onClose={()=>setSchemaDialog(null)} onMessage={toast}/>}
+    {measurementAction&&<MeasurementActionMenu anchor={measurementAction.anchor} measurement={measurementAction.measurement} onViewData={()=>viewMeasurementData(measurementAction.measurement)} onNewQuery={()=>createMeasurementQuery(measurementAction.measurement)} onViewSchema={()=>void viewMeasurementSchema(measurementAction.measurement)} onClose={()=>setMeasurementAction(null)}/>}
     {claudeSettingsOpen&&<ClaudeSettingsDialog settings={claudeSettings} onClose={()=>setClaudeSettingsOpen(false)} onSave={(settings,key)=>{setClaudeSettings(settings);save('gdb.claude.settings',settings);if(key)void saveCredential('claude-api',key);setClaudeSettingsOpen(false);toast('诊断设置已保存')}}/>}
     {tourOpen&&<FeatureTour steps={TOUR_STEPS} onComplete={()=>finishTour('completed')} onSkip={()=>finishTour('skipped')}/>}
     <aside className={`claude-drawer ${claudeOpen ? 'open' : ''}`}><div className="drawer-head"><b>✦ 查询诊断</b><span>{claudeLoading&&<button className="danger" onClick={cancelDiagnosis}>取消</button>}<button onClick={()=>setClaudeSettingsOpen(true)} title="诊断设置">设置</button><button onClick={() => {cancelDiagnosis();setClaudeOpen(false)}}>×</button></span></div><div className="drawer-body">{claudeLoading?<div className="center">正在检查语法、Schema 与性能…</div>:claudeAnswer?<DiagnosisPanel result={claudeAnswer} originalSql={sql} onOpen={openQueryTab} onReplace={fixed=>setSql(fixed)}/>:<div className="center"><div><b>诊断当前 InfluxQL</b><small>仅发送 SQL、错误和 Field/Tag Schema</small></div></div>}</div><footer>{claudeSettings.provider==='cli'?'本地 Claude CLI':'Anthropic API'} · {database||'未连接'}</footer></aside>
