@@ -3,6 +3,9 @@ import type { MeasurementSchema } from './types'
 const NANOSECONDS_PER_SECOND = 1_000_000_000n
 const NANOSECONDS_PER_DAY = 86_400n * NANOSECONDS_PER_SECOND
 const BEIJING_OFFSET_SECONDS = 8 * 60 * 60
+// Measurement day tables support ten-digit epoch seconds only (2001-09-09 onward).
+// Asia/Shanghai has no DST after 1991, so this supported domain is fixed UTC+8.
+const SUPPORTED_MEASUREMENT_EPOCH_START_SECONDS = 1_000_000_000n
 const PAGE_SIZES = new Set([50, 100, 200, 500])
 const beijingDateFormatter = new Intl.DateTimeFormat('en-US', {
   timeZone: 'Asia/Shanghai',
@@ -43,6 +46,11 @@ export type MeasurementDataPage = {
   page: { limit: number; offset: number; hasMore: boolean }
 }
 
+export function nextMeasurementOffset(displayedPage: MeasurementDataPage['page'] | null, direction: -1 | 1) {
+  if (!displayedPage) return 0
+  return Math.max(0, displayedPage.offset + direction * displayedPage.limit)
+}
+
 function dayParts(timestampMs: number) {
   const values = Object.fromEntries(
     beijingDateFormatter.formatToParts(new Date(timestampMs))
@@ -74,6 +82,7 @@ export function measurementDay(measurement: string): MeasurementDay | null {
   if (!suffix) return null
 
   const timestampSeconds = BigInt(suffix)
+  if (timestampSeconds < SUPPORTED_MEASUREMENT_EPOCH_START_SECONDS) return null
   const timestampMs = Number(timestampSeconds * 1_000n)
   const { year, month, day } = dayParts(timestampMs)
   const startSeconds = BigInt(Date.UTC(year, month - 1, day) / 1_000 - BEIJING_OFFSET_SECONDS)

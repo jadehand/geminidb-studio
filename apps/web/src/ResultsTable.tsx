@@ -3,18 +3,17 @@ import type { CSSProperties } from 'react'
 import type { QueryRow } from './types'
 import { resultCell } from './result-time'
 import { ResultGridZoomControls } from './ResultGridZoomControls'
-import { DEFAULT_GRID_ZOOM, GRID_ZOOM_STORAGE_KEY, normalizeGridZoom, stepGridZoom } from './result-grid-zoom'
+import { stepGridZoom, useGridZoom } from './result-grid-zoom'
 
 export default function ResultsTable({ rows }: { rows: QueryRow[] }) {
   const columns = Object.keys(rows[0] || {})
   const [search,setSearch]=useState(''), [sort,setSort]=useState<{column:string;desc:boolean}|null>(null), [hidden,setHidden]=useState<Set<string>>(new Set())
   const [page,setPage]=useState(1),[pageSize,setPageSize]=useState(()=>Number(localStorage.getItem('gdb.resultPageSize'))||100)
-  const [zoom,setZoom]=useState(()=>normalizeGridZoom(localStorage.getItem(GRID_ZOOM_STORAGE_KEY) ?? DEFAULT_GRID_ZOOM))
-  const setGridZoom=(value:number)=>setZoom(normalizeGridZoom(value))
+  const [zoom,setZoom]=useGridZoom()
+  const setGridZoom=(value:number)=>setZoom(value)
   const visible=columns.filter(column=>!hidden.has(column))
   const data=useMemo(()=>{const filtered=search?rows.filter(row=>Object.values(row).some(value=>String(value??'').toLowerCase().includes(search.toLowerCase()))):rows;if(!sort)return filtered;return [...filtered].sort((a,b)=>String(a[sort.column]??'').localeCompare(String(b[sort.column]??''),undefined,{numeric:true})*(sort.desc?-1:1))},[rows,search,sort])
   useEffect(()=>setPage(1),[rows])
-  useEffect(()=>localStorage.setItem(GRID_ZOOM_STORAGE_KEY,String(zoom)),[zoom])
   const pages=Math.max(1,Math.ceil(data.length/pageSize)),currentPage=Math.min(page,pages),paged=data.slice((currentPage-1)*pageSize,currentPage*pageSize)
   const start=data.length?(currentPage-1)*pageSize+1:0,end=Math.min(currentPage*pageSize,data.length)
   return <div className="data-grid" style={{ '--grid-zoom': zoom / 100 } as CSSProperties} onWheel={event=>{if(!event.ctrlKey)return;event.preventDefault();setZoom(current=>stepGridZoom(current,event.deltaY<0?1:-1))}}><div className="grid-tools"><input value={search} onChange={event=>{setSearch(event.target.value);setPage(1)}} placeholder="搜索结果…"/><details><summary>列 {visible.length}/{columns.length}</summary><div className="column-menu">{columns.map(column=><label key={column}><input type="checkbox" checked={!hidden.has(column)} onChange={()=>setHidden(current=>{const next=new Set(current);next.has(column)?next.delete(column):next.add(column);return next})}/>{column}</label>)}</div></details><ResultGridZoomControls zoom={zoom} onChange={setGridZoom}/><span>{data.length} 行 · 客户端分页 <i>↔ 横向滚动查看更多字段</i></span></div><div className="grid-scroll" tabIndex={0} aria-label="查询结果表格，可横向滚动"><table><thead><tr>{visible.map((column,index)=><th key={column} className={index===0?'pinned':''} onClick={()=>setSort(current=>({column,desc:current?.column===column?!current.desc:false}))}>{column}{sort?.column===column?(sort.desc?' ↓':' ↑'):''}<small>{column.toLowerCase()==='time'?'UTC':typeof rows[0]?.[column]}</small></th>)}</tr></thead><tbody>{paged.map((row,index)=><tr key={(currentPage-1)*pageSize+index}>{visible.map((column,columnIndex)=>{const cell=resultCell(column,row[column]);return <td key={column} className={columnIndex===0?'pinned':''} title={cell.title}>{cell.text}</td>})}</tr>)}</tbody></table></div><div className="grid-pagination"><span>显示 {start}–{end} / {data.length}</span><label className="page-size">每页 <select value={pageSize} onChange={event=>{const size=Number(event.target.value);setPageSize(size);setPage(1);localStorage.setItem('gdb.resultPageSize',String(size))}}>{[50,100,200,500,1000].map(size=><option key={size}>{size}</option>)}</select> 行</label><div className="page-controls"><button disabled={currentPage<=1} onClick={()=>setPage(1)} title="首页">«</button><button disabled={currentPage<=1} onClick={()=>setPage(value=>value-1)} title="上一页">‹</button><label>第 <input type="number" min="1" max={pages} value={currentPage} onChange={event=>setPage(Math.max(1,Math.min(pages,Number(event.target.value)||1)))}/> / {pages} 页</label><button disabled={currentPage>=pages} onClick={()=>setPage(value=>value+1)} title="下一页">›</button><button disabled={currentPage>=pages} onClick={()=>setPage(pages)} title="末页">»</button></div></div></div>

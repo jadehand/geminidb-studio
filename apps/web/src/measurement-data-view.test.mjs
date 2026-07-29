@@ -31,7 +31,10 @@ test('measurement data client encodes its complete read-only page query', async 
 })
 
 test('data view provides the read-only toolbar, grouped columns, and request-safety guards', async () => {
-  const source = await readFile(new URL('./MeasurementDataView.tsx', import.meta.url), 'utf8')
+  const [source, css] = await Promise.all([
+    readFile(new URL('./MeasurementDataView.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('./measurement-data-view.css', import.meta.url), 'utf8'),
+  ])
 
   for (const label of ['全天', '自定义时段', '每页', '刷新', '时间', 'Tags', 'Fields']) assert.match(source, new RegExp(label))
   assert.match(source, /ResultGridZoomControls/)
@@ -39,6 +42,10 @@ test('data view provides the read-only toolbar, grouped columns, and request-saf
   assert.match(source, /controller\.signal\.aborted/)
   assert.match(source, /tab\.connectionId !== currentConnectionId \|\| tab\.database !== currentDatabase/)
   assert.match(source, /measurementRangeFromBeijingTime/)
+  assert.match(source, /aria-pressed=\{rangeMode === 'whole'\}/)
+  assert.match(source, /aria-pressed=\{rangeMode === 'custom'\}/)
+  assert.match(css, /main:has\(> \.measurement-data-view\)>\.editor\{display:block/)
+  assert.doesNotMatch(css, /main:has\(> \.measurement-data-view\)>\.editor\{display:none/)
   assert.doesNotMatch(source, /onDoubleClick/)
   assert.doesNotMatch(source, /contentEditable/)
 })

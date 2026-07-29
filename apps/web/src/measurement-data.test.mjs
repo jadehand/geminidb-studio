@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { measurementDay, normalizeMeasurementDataOptions, measurementRangeFromBeijingTime } from './measurement-data.ts'
+import { measurementDay, nextMeasurementOffset, normalizeMeasurementDataOptions, measurementRangeFromBeijingTime } from './measurement-data.ts'
 
 test('derives Beijing natural-day nanosecond bounds from a ten-digit suffix', () => {
   assert.deepEqual(measurementDay('cpu_1784995200'), {
@@ -107,4 +107,23 @@ test('maps Beijing wall-clock inputs to the selected day without crossing its bo
   })
   assert.throws(() => measurementRangeFromBeijingTime(day, '12:35', '12:34'), /start/i)
   assert.throws(() => measurementRangeFromBeijingTime(day, '12:61', '13:00'), /time/i)
+})
+
+test('only accepts the supported ten-digit epoch-second Measurement day domain', () => {
+  assert.equal(measurementDay('cpu_0999999999'), null)
+  assert.deepEqual(measurementDay('cpu_1000000000'), {
+    date: '2001-09-09',
+    startNs: '999964800000000000',
+    endNs: '1000051199999999999',
+  })
+})
+
+test('derives pagination from the page currently displayed after a failed target request', () => {
+  const displayedPage = { limit: 50, offset: 0, hasMore: true }
+  const failedTargetOffset = nextMeasurementOffset(displayedPage, 1)
+
+  assert.equal(failedTargetOffset, 50)
+  assert.equal(nextMeasurementOffset(displayedPage, 1), 50)
+  assert.equal(nextMeasurementOffset({ limit: 100, offset: 300, hasMore: true }, -1), 200)
+  assert.equal(nextMeasurementOffset(displayedPage, -1), 0)
 })
