@@ -48,6 +48,8 @@
 :root[data-theme="dark"] tbody tr:hover td{background:#202a35}
 :root[data-theme="dark"] .grid-tools,
 :root[data-theme="dark"] .grid-pagination{background:#1b222b;border-color:#36404c;color:#9eabba}
+:root[data-theme="dark"] .grid-scroll th{color:#c8d3df}
+:root[data-theme="dark"] .grid-scroll td{color:#e0e7ef;border-color:#37414d}
 :root[data-theme="dark"] .grid-scroll td.pinned{background:#171d25}
 :root[data-theme="dark"] .dialog,
 :root[data-theme="dark"] .claude-drawer{color:#d9e1ea;background:#1d252f}
