@@ -1,0 +1,5 @@
+import type { WorkspaceTab } from './types'
+
+export default function WorkspaceTabs({tabs,activeTabId,onSelect,onClose,onAddQuery,onRenameQuery}:{tabs:WorkspaceTab[];activeTabId:string;onSelect:(id:string)=>void;onClose:(id:string)=>void;onAddQuery:()=>void;onRenameQuery:(id:string)=>void}){
+  return <div className="workspace-tabs" role="tablist">{tabs.map(tab=><div key={tab.id} role="tab" tabIndex={0} aria-selected={tab.id===activeTabId} className={`query-tab ${tab.kind==='measurement-data'?'measurement-data-tab':''} ${tab.id===activeTabId?'active':''}`} onClick={()=>onSelect(tab.id)} onKeyDown={event=>{if(event.key==='Enter'||event.key===' ')onSelect(tab.id)}} onDoubleClick={tab.kind==='query'?()=>onRenameQuery(tab.id):undefined} title={tab.kind==='query'?'双击重命名':tab.name}><span>{tab.name}</span><button className="close-tab" onClick={event=>{event.stopPropagation();onClose(tab.id)}} aria-label={`关闭 ${tab.name}`}>×</button></div>)}<button className="add-query-tab" onClick={onAddQuery} title="新建查询">＋</button></div>
+}
