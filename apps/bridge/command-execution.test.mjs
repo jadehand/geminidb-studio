@@ -137,6 +137,29 @@ test('single-query execution forwards one query and preserves the response shape
   assert.deepEqual(result, { rows:[{ value:42 }], rowCount:1, durationMs:7, hasMore:false })
 })
 
+test('single-query execution preserves a valid database switch without upstream', async () => {
+  const result = await executeSingleQuery({
+    script:' USE `metrics_archive`; ',
+    executeQuery:async () => assert.fail('unexpected upstream query'),
+  })
+  assert.deepEqual(result, { affectedRows:0, durationMs:0, message:'database 上下文已切换' })
+})
+
+test('single-query execution rejects mixed or repeated USE commands before upstream', async () => {
+  for (const [script, code] of [
+    ['USE metrics; INSERT m value=1 1', 'MIXED_COMMAND_BATCH'],
+    ['USE metrics; USE archive', 'MULTI_STATEMENT_QUERY_UNSUPPORTED'],
+    ['USE; SELECT * FROM m', 'UNSUPPORTED_COMMAND'],
+  ]) {
+    let upstreamCalls = 0
+    await assert.rejects(
+      executeSingleQuery({ script, executeQuery:async () => { upstreamCalls++ } }),
+      error => error.code === code && error.status === 400,
+    )
+    assert.equal(upstreamCalls, 0)
+  }
+})
+
 test('server query route uses the single-query guard', () => {
   const source = readFileSync(new URL('./server.mjs', import.meta.url), 'utf8')
   const queryStart = source.indexOf("url.pathname==='/query'")
