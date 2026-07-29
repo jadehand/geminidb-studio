@@ -63,3 +63,16 @@
 :root[data-theme="dark"] .connection-dialog-actions{border-color:#394350}
 :root[data-theme="dark"] .connection-test-result.is-success{color:#8ed8b6;background:#172d26;border-color:#2e5a49}
 :root[data-theme="dark"] .connection-test-result.is-error{color:#f0aaa4;background:#35201f;border-color:#6f3a36}
+
+.delete-connection-dialog{width:min(460px,92vw)}
+.delete-connection-dialog dl{display:grid;grid-template-columns:minmax(76px,auto) minmax(0,1fr);gap:10px 14px;margin:18px 0 0;font-size:11px}
+.delete-connection-dialog dt{color:#687584;font-weight:650}
+.delete-connection-dialog dd{min-width:0;margin:0;color:#273443;overflow-wrap:anywhere;word-break:break-word}
+.delete-connection-dialog .dialog-actions{justify-content:flex-end;gap:8px}
+.delete-connection-dialog .solid-danger{background:#c94f58;border-color:#c94f58;color:#fff;font-weight:650}
+.delete-connection-dialog .solid-danger:hover{background:#b83f49;border-color:#b83f49}
+:root[data-theme="dark"] .delete-connection-dialog{background:#1d252f}
+:root[data-theme="dark"] .delete-connection-dialog dt{color:#9aa7b7}
+:root[data-theme="dark"] .delete-connection-dialog dd{color:#d9e1ea}
+:root[data-theme="dark"] .delete-connection-dialog .solid-danger{background:#d15b64;border-color:#d15b64}
+:root[data-theme="dark"] .delete-connection-dialog .solid-danger:hover{background:#bb4751;border-color:#bb4751}

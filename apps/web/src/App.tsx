@@ -20,6 +20,7 @@ import BulkDataWizard from './BulkDataWizard'
 import { initialTourStatus, TOUR_STEPS, TOUR_STORAGE_KEY, type TourStatus } from './onboarding'
 import { bulkEntryState } from './bulk-data'
 import { isUnfinishedBulkJob, waitForBulkJobTerminal } from './app-close'
+import DeleteConnectionDialog from './DeleteConnectionDialog'
 import type { BulkJobStatus, ClaudeDiagnosis, ClaudeSettings, Connection, Execution, Favorite, MeasurementSchema, QueryRow } from './types'
 const QueryEditor = lazy(() => import('./QueryEditor'))
 
@@ -74,6 +75,7 @@ export default function App() {
   const schemaRequest = useRef(0)
   const cancelReason = useRef<'user' | 'timeout' | null>(null)
   const [connectionDialog, setConnectionDialog] = useState<Connection | null>(null)
+  const [connectionPendingDelete, setConnectionPendingDelete] = useState<Connection | null>(null)
   const [favoriteDialog, setFavoriteDialog] = useState(false)
   const [timeDialog, setTimeDialog] = useState(false)
   const [bulkWizardOpen, setBulkWizardOpen] = useState(false)
@@ -128,6 +130,20 @@ export default function App() {
   function closeQueryTab(id: string) { if(queryTabs.length===1){persistQueryTabs([{...queryTabs[0],sql:'',name:'查询 1'}]);return}const index=queryTabs.findIndex(tab=>tab.id===id),next=queryTabs.filter(tab=>tab.id!==id);persistQueryTabs(next);if(id===activeTabId)selectQueryTab(next[Math.max(0,index-1)].id) }
   function renameQueryTab(id: string) { const current=queryTabs.find(tab=>tab.id===id);if(!current)return;const name=window.prompt('查询页签名称',current.name)?.trim();if(name)persistQueryTabs(queryTabs.map(tab=>tab.id===id?{...tab,name}:tab)) }
   function persistConnections(next: Connection[]) { setConnections(next); next.forEach(connection => { if (connection.password) void saveCredential(connection.id,connection.password) }); save('gdb.connections', next.map(connection => ({ ...connection, password: '' }))) }
+  function confirmDeleteConnection() {
+    const connection = connectionPendingDelete
+    if (!connection) return
+    const next = connections.filter(item => item.id !== connection.id)
+    persistConnections(next)
+    void deleteCredential(connection.id)
+    setConnectionPendingDelete(null)
+    if (activeConnection === connection.id) {
+      const nextId = next[0]?.id || ''
+      setActiveConnection(nextId)
+      save('gdb.activeConnection', nextId)
+      if (next[0]) void connect(next[0])
+    }
+  }
   function switchTool(tool: SideTool) { if (tool === sideTool && sideOpen) { setSideOpen(false); save('gdb.sideOpen', false); return } setSideTool(tool); setSideOpen(true); save('gdb.sideTool', tool); save('gdb.sideOpen', true) }
   function resizeSidebarBy(next:number){const width=fitSidebarWidth(next);setSidebarWidth(width);save('gdb.sidebarWidth',width)}
   function beginSidebarResize(event:React.PointerEvent<HTMLButtonElement>){event.preventDefault();const origin=event.clientX,start=sidebarWidth;setSidebarDragging(true);const move=(next:PointerEvent)=>setSidebarWidth(fitSidebarWidth(start+next.clientX-origin));const stop=(next:PointerEvent)=>{const width=fitSidebarWidth(start+next.clientX-origin);setSidebarWidth(width);save('gdb.sidebarWidth',width);setSidebarDragging(false);window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',stop)};window.addEventListener('pointermove',move);window.addEventListener('pointerup',stop)}
@@ -333,7 +349,8 @@ export default function App() {
       <section className="results" data-tour="query-results"><div className="result-tabs" data-tour="result-actions"><div>{visibleResultViews.map(item => <button key={item} className={view === item ? 'active' : ''} onClick={() => setView(item)}>{({result:'执行结果',history:`执行记录 ${history.length}`,messages:'交互消息',favorites:`收藏 ${favorites.length}`})[item]}</button>)}</div>{view === 'result' && <div className="result-actions"><button onClick={() => void copyResults()}>复制</button><button className="wide-export-action" onClick={exportCsv}>CSV</button><button className="wide-export-action" onClick={exportExcel}>Excel</button><button className="wide-export-action" onClick={exportJson}>JSON</button><button className="wide-export-action" onClick={()=>void selectExportDirectory()} title={exportDirectory||'系统下载目录'}>目录</button><details className="action-menu export-menu"><summary>导出 ▾</summary><div><button onClick={exportCsv}>导出 CSV</button><button onClick={exportExcel}>导出 Excel</button><button onClick={exportJson}>导出 JSON</button><button onClick={()=>void selectExportDirectory()} title={exportDirectory||'系统下载目录'}>选择导出目录…</button>{exportDirectory&&<button onClick={resetExportDirectory}>恢复系统下载目录</button>}</div></details></div>}</div><div className="result-body"><ResultContent view={view} rows={rows} history={history} favorites={favorites} onUseSql={value => { setSql(value); setView('result') }} onRestoreSql={value=>{setSql(value);toast('已放入当前查询窗口')}} onRemoveFavorite={id => { const next = favorites.filter(f => f.id !== id); setFavorites(next); save('gdb.favorites', next) }}/></div><div className="statusbar"><b className={resultStatus === 'ERROR' ? 'danger' : ''}>{resultStatus}</b><span>{resultMeta}</span></div></section>
     </main>
 
-    {connectionDialog && <ConnectionDialog connection={connectionDialog} onClose={() => setConnectionDialog(null)} onSave={connection => { const next = connections.some(c => c.id === connection.id) ? connections.map(c => c.id === connection.id ? connection : c) : [connection, ...connections]; persistConnections(next); setActiveConnection(connection.id); save('gdb.activeConnection', connection.id); setConnectionDialog(null); void connect(connection) }} onDuplicate={connection=>{const copy={...connection,id:crypto.randomUUID(),name:`${connection.name} 副本`};persistConnections([copy,...connections]);setConnectionDialog(copy)}} onDelete={connection=>{if(!window.confirm(`删除连接“${connection.name}”？`))return;const next=connections.filter(item=>item.id!==connection.id);persistConnections(next);void deleteCredential(connection.id);setConnectionDialog(null);if(activeConnection===connection.id){const nextId=next[0]?.id||'';setActiveConnection(nextId);save('gdb.activeConnection',nextId);if(next[0])void connect(next[0])}}}/>} 
+    {connectionDialog && <ConnectionDialog connection={connectionDialog} onClose={() => setConnectionDialog(null)} onSave={connection => { const next = connections.some(c => c.id === connection.id) ? connections.map(c => c.id === connection.id ? connection : c) : [connection, ...connections]; persistConnections(next); setActiveConnection(connection.id); save('gdb.activeConnection', connection.id); setConnectionDialog(null); void connect(connection) }} onDuplicate={connection=>{const copy={...connection,id:crypto.randomUUID(),name:`${connection.name} 副本`};persistConnections([copy,...connections]);setConnectionDialog(copy)}} onDelete={connection=>{setConnectionDialog(null);setConnectionPendingDelete(connection)}}/>}
+    {connectionPendingDelete && <DeleteConnectionDialog connection={connectionPendingDelete} onCancel={() => setConnectionPendingDelete(null)} onConfirm={confirmDeleteConnection}/>}
     {favoriteDialog&&<FavoriteDialog database={database} sql={sql} onClose={()=>setFavoriteDialog(false)} onSave={confirmFavorite}/>}
     {recoveryOpen&&<div className="modal"><div className="dialog recovery-dialog"><h2>恢复查询工作区</h2><p>检测到上次未正常关闭。可以恢复查询页签和目录位置；不会自动执行 SQL。</p><div className="dialog-actions"><button onClick={discardWorkspace}>重新开始</button><button className="primary" onClick={restoreWorkspace}>恢复工作区</button></div></div></div>}
     {timeDialog && <TimeDialog onClose={() => setTimeDialog(false)}/>} 
