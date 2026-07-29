@@ -57,6 +57,18 @@ function nanoseconds(value: unknown, name: string) {
   return BigInt(value)
 }
 
+function beijingTimeNanoseconds(value: string) {
+  const match = value.match(/^(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?$/)
+  if (!match) throw new RangeError('time must use HH:mm, HH:mm:ss, or HH:mm:ss.nnnnnnnnn')
+  const [, hours, minutes, seconds = '0', fractional = ''] = match
+  const hour = Number(hours)
+  const minute = Number(minutes)
+  const second = Number(seconds)
+  if (hour > 23 || minute > 59 || second > 59) throw new RangeError('time must be within one Beijing natural day')
+  return BigInt(hour * 3_600 + minute * 60 + second) * NANOSECONDS_PER_SECOND
+    + BigInt(fractional.padEnd(9, '0'))
+}
+
 export function measurementDay(measurement: string): MeasurementDay | null {
   const suffix = measurement.match(/_(\d{10})$/)?.[1]
   if (!suffix) return null
@@ -97,4 +109,14 @@ export function normalizeMeasurementDataOptions(input: MeasurementDataOptionsInp
   if (start < dayStart || end > dayEnd) throw new RangeError('custom range must stay within the selected day')
 
   return { limit, offset, startNs: start.toString(), endNs: end.toString() }
+}
+
+/** Converts Asia/Shanghai wall-clock inputs to inclusive bounds within the selected natural day. */
+export function measurementRangeFromBeijingTime(day: MeasurementDay | null, startTime: string, endTime: string) {
+  if (!day) throw new RangeError('custom ranges require a selected day')
+  const dayStart = nanoseconds(day.startNs, 'selected day startNs')
+  const startNs = (dayStart + beijingTimeNanoseconds(startTime)).toString()
+  const endNs = (dayStart + beijingTimeNanoseconds(endTime)).toString()
+  const options = normalizeMeasurementDataOptions({ day, startNs, endNs })
+  return { startNs: options.startNs!, endNs: options.endNs! }
 }

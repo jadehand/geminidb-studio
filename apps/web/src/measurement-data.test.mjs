@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { measurementDay, normalizeMeasurementDataOptions } from './measurement-data.ts'
+import { measurementDay, normalizeMeasurementDataOptions, measurementRangeFromBeijingTime } from './measurement-data.ts'
 
 test('derives Beijing natural-day nanosecond bounds from a ten-digit suffix', () => {
   assert.deepEqual(measurementDay('cpu_1784995200'), {
@@ -97,4 +97,14 @@ test('rejects non-string selected-day nanosecond bounds without coercion', () =>
       day: { ...day, endNs },
     }), /string/i)
   }
+})
+
+test('maps Beijing wall-clock inputs to the selected day without crossing its bounds', () => {
+  const day = measurementDay('cpu_1784995200')
+  assert.deepEqual(measurementRangeFromBeijingTime(day, '12:34', '12:34:56.123456789'), {
+    startNs: '1785040440000000000',
+    endNs: '1785040496123456789',
+  })
+  assert.throws(() => measurementRangeFromBeijingTime(day, '12:35', '12:34'), /start/i)
+  assert.throws(() => measurementRangeFromBeijingTime(day, '12:61', '13:00'), /time/i)
 })

@@ -20,6 +20,7 @@ import './schema-dialog.css'
 import './responsive-layout.css'
 import './theme.css'
 import './bulk-data.css'
+import './measurement-data-view.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode><App /></React.StrictMode>
