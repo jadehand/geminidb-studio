@@ -52,8 +52,8 @@ function dayParts(timestampMs: number) {
   return { year: Number(values.year), month: Number(values.month), day: Number(values.day) }
 }
 
-function nanoseconds(value: string, name: string) {
-  if (!/^\d+$/.test(value)) throw new TypeError(`${name} must be a decimal nanosecond string`)
+function nanoseconds(value: unknown, name: string) {
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) throw new TypeError(`${name} must be a decimal nanosecond string`)
   return BigInt(value)
 }
 

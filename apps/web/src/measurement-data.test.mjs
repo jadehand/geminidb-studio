@@ -64,3 +64,37 @@ test('rejects custom ranges that are incomplete, reversed, or outside the select
     day,
   }), /selected day/i)
 })
+
+test('rejects non-string custom nanosecond bounds without coercion', () => {
+  const day = measurementDay('cpu_1784995200')
+  const fakeNs = { toString: () => day.startNs }
+  const fakeEndNs = { toString: () => day.endNs }
+
+  for (const startNs of [Number(day.startNs), BigInt(day.startNs), fakeNs]) {
+    assert.throws(() => normalizeMeasurementDataOptions({ startNs, endNs: day.endNs, day }), /string/i)
+  }
+  for (const endNs of [Number(day.endNs), BigInt(day.endNs), fakeEndNs]) {
+    assert.throws(() => normalizeMeasurementDataOptions({ startNs: day.startNs, endNs, day }), /string/i)
+  }
+})
+
+test('rejects non-string selected-day nanosecond bounds without coercion', () => {
+  const day = measurementDay('cpu_1784995200')
+  const fakeNs = { toString: () => day.startNs }
+  const fakeEndNs = { toString: () => day.endNs }
+
+  for (const startNs of [Number(day.startNs), BigInt(day.startNs), fakeNs]) {
+    assert.throws(() => normalizeMeasurementDataOptions({
+      startNs: day.startNs,
+      endNs: day.endNs,
+      day: { ...day, startNs },
+    }), /string/i)
+  }
+  for (const endNs of [Number(day.endNs), BigInt(day.endNs), fakeEndNs]) {
+    assert.throws(() => normalizeMeasurementDataOptions({
+      startNs: day.startNs,
+      endNs: day.endNs,
+      day: { ...day, endNs },
+    }), /string/i)
+  }
+})
