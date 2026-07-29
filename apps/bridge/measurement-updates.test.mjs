@@ -34,6 +34,48 @@ test('accepts a missing schema-defined field and keeps exact point identity', ()
   })
 })
 
+test('preserves own __proto__ tag and field properties without changing object prototypes', () => {
+  const specialSchema = {
+    tags:['__proto__'],
+    fields:[{ name:'__proto__', type:'string' }],
+  }
+  const specialUpdate = JSON.parse('{"id":"special-point","timestampNs":"1784995200123456789","tags":{"__proto__":"tag-value"},"fields":{"__proto__":"field-value"}}')
+
+  const normalized = normalizePointUpdate(specialUpdate, specialSchema)
+
+  assert.equal(Object.getPrototypeOf(normalized.tags), Object.prototype)
+  assert.equal(Object.getPrototypeOf(normalized.fields), Object.prototype)
+  assert.equal(Object.hasOwn(normalized.tags, '__proto__'), true)
+  assert.equal(Object.hasOwn(normalized.fields, '__proto__'), true)
+  assert.equal(normalized.tags.__proto__, 'tag-value')
+  assert.deepEqual(normalized.fields.__proto__, { type:'string', value:'field-value' })
+})
+
+test('writes own __proto__ tag and field keys in Line Protocol', async () => {
+  const writes = []
+  const specialSchema = {
+    tags:['__proto__'],
+    fields:[{ name:'__proto__', type:'string' }],
+  }
+  const specialUpdate = Object.fromEntries([
+    ['id', 'special-point'],
+    ['timestampNs', '1784995200123456789'],
+    ['tags', Object.fromEntries([['__proto__', 'tag-value']])],
+    ['fields', Object.fromEntries([['__proto__', 'field-value']])],
+  ])
+
+  await executeMeasurementUpdates({
+    session:{ environment:'dev' },
+    database:'metrics',
+    measurement:'cpu',
+    updates:[specialUpdate],
+    loadSchema:async () => specialSchema,
+    writePoint:async line => writes.push(line),
+  })
+
+  assert.deepEqual(writes, ['cpu,__proto__=tag-value __proto__="field-value" 1784995200123456789'])
+})
+
 test('rejects point updates that do not preserve the complete tag identity', () => {
   assertInvalid({ ...point, tags:{ host:'node1' } }, 'tags must include every schema tag exactly once')
   assertInvalid({ ...point, tags:{ host:'node1', region:'cn-east', zone:'a' } }, 'tags must include every schema tag exactly once')

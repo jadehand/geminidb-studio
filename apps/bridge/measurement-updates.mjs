@@ -62,20 +62,18 @@ export function normalizePointUpdate(update, schema) {
   if (tagEntries.length !== definition.tags.size || tagEntries.some(([name]) => !definition.tags.has(name))) {
     throw updateError('tags must include every schema tag exactly once')
   }
-  const tags = {}
-  for (const [name, value] of tagEntries) {
+  const tags = Object.fromEntries(tagEntries.map(([name, value]) => {
     if (typeof value !== 'string') throw updateError(`tag ${name} must be a string`)
-    tags[name] = value
-  }
+    return [name, value]
+  }))
 
   const fieldEntries = objectEntries(update.fields, 'fields')
   if (fieldEntries.length === 0) throw updateError('fields must contain at least one changed field')
-  const fields = {}
-  for (const [name, value] of fieldEntries) {
+  const fields = Object.fromEntries(fieldEntries.map(([name, value]) => {
     const type = definition.fields.get(name)
     if (!type) throw updateError(`field ${name} is not defined by the measurement schema`)
-    fields[name] = normalizedField(type, value, name)
-  }
+    return [name, normalizedField(type, value, name)]
+  }))
 
   return { timestampNs:update.timestampNs, tags, fields }
 }
