@@ -12,7 +12,8 @@ import { connectionForTransport, endpointProtocol, withEndpointProtocol } from '
 import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH } from './sidebar-width'
 import { conversionFromMilliseconds, formatBeijing, formatUtcInput, parseDateTime, parseUnixTimestamp, type DateTimeZone, type TimeConversion } from './time-converter'
 import { csvContent, excelContent, jsonContent } from './result-export'
-import { NEW_INFLUX_CONNECTION, removeMockConnections } from './connections'
+import { migrateConnections, NEW_INFLUX_CONNECTION } from './connections'
+import { effectiveReadOnly, normalizeConnectionWritePolicy } from './write-policy'
 import { nextTheme, resolveTheme, THEME_LABEL, type ThemePreference } from './theme'
 import FeatureTour from './FeatureTour'
 import SchemaDialog from './SchemaDialog'
@@ -41,7 +42,7 @@ function formatTime(value: number) { return new Date(value).toLocaleString('zh-C
 function download(name: string, type: string, content: string) { const url = URL.createObjectURL(new Blob([content], { type })); const link = document.createElement('a'); link.href = url; link.download = name; link.hidden = true; document.body.append(link); link.click(); link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000) }
 
 export default function App() {
-  const [connections, setConnections] = useState<Connection[]>(() => removeMockConnections(load('gdb.connections', [])))
+  const [connections, setConnections] = useState<Connection[]>(() => migrateConnections(load('gdb.connections', [])))
   const [activeConnection, setActiveConnection] = useState(loadActiveConnection)
   const [databases, setDatabases] = useState<string[]>([])
   const [database, setDatabase] = useState(() => load('gdb.workspace.database',''))
@@ -129,7 +130,7 @@ export default function App() {
   function selectQueryTab(id: string) { setActiveTabId(id); save('gdb.activeQueryTab',id) }
   function closeQueryTab(id: string) { if(queryTabs.length===1){persistQueryTabs([{...queryTabs[0],sql:'',name:'查询 1'}]);return}const index=queryTabs.findIndex(tab=>tab.id===id),next=queryTabs.filter(tab=>tab.id!==id);persistQueryTabs(next);if(id===activeTabId)selectQueryTab(next[Math.max(0,index-1)].id) }
   function renameQueryTab(id: string) { const current=queryTabs.find(tab=>tab.id===id);if(!current)return;const name=window.prompt('查询页签名称',current.name)?.trim();if(name)persistQueryTabs(queryTabs.map(tab=>tab.id===id?{...tab,name}:tab)) }
-  function persistConnections(next: Connection[]) { setConnections(next); next.forEach(connection => { if (connection.password) void saveCredential(connection.id,connection.password) }); save('gdb.connections', next.map(connection => ({ ...connection, password: '' }))) }
+  function persistConnections(next: Connection[]) { const normalized=next.map(normalizeConnectionWritePolicy); setConnections(normalized); normalized.forEach(connection => { if (connection.password) void saveCredential(connection.id,connection.password) }); save('gdb.connections', normalized.map(connection => ({ ...connection, password: '' }))); return normalized }
   function confirmDeleteConnection() {
     const connection = connectionPendingDelete
     if (!connection) return
@@ -415,7 +416,7 @@ function ClaudeSettingsDialog({settings,onClose,onSave}:{settings:ClaudeSettings
 }
 
 function ConnectionDialog({ connection, onClose, onSave, onDuplicate, onDelete }: { connection: Connection; onClose: () => void; onSave: (connection: Connection) => void; onDuplicate:(connection:Connection)=>void; onDelete:(connection:Connection)=>void }) {
-  const [draft, setDraft] = useState(connection)
+  const [draft, setDraft] = useState(() => normalizeConnectionWritePolicy(connection))
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState('')
   const [testResultCopied, setTestResultCopied] = useState(false)
@@ -442,10 +443,10 @@ function ConnectionDialog({ connection, onClose, onSave, onDuplicate, onDelete }
   return <div className="modal"><div className="dialog connection-dialog" role="dialog" aria-modal="true" aria-labelledby="connection-dialog-title">
     <div className="connection-dialog-head"><h2 id="connection-dialog-title">GeminiDB Influx 连接</h2><p>连接信息仅保存在本机，密码由系统凭据库安全保存。</p></div>
     <div className="connection-form">
-      <div className="connection-form-row"><label>连接名称<input value={draft.name} onChange={e => setDraft({...draft, name:e.target.value})} placeholder="例如：生产环境"/></label><label>环境<select value={draft.environment||'dev'} onChange={e=>setDraft({...draft,environment:e.target.value as Connection['environment']})}><option value="prod">生产</option><option value="test">测试</option><option value="dev">开发</option></select></label></div>
+      <div className="connection-form-row"><label>连接名称<input value={draft.name} onChange={e => setDraft({...draft, name:e.target.value})} placeholder="例如：生产环境"/></label><label>环境<select value={draft.environment||'dev'} onChange={e=>{const environment=e.target.value as Connection['environment'];setDraft({...draft,environment,readOnly:effectiveReadOnly(environment)})}}><option value="prod">生产</option><option value="test">测试</option><option value="dev">开发</option></select></label></div>
       <div className="connection-form-row protocol-row"><label>连接协议<select value={protocol} onChange={e=>setDraft({...draft,endpoint:withEndpointProtocol(draft.endpoint,e.target.value as 'http'|'https'),insecureSkipVerify:e.target.value==='https'&&draft.insecureSkipVerify})}><option value="http">HTTP</option><option value="https">HTTPS（TLS）</option></select></label><label>实例地址<input value={draft.endpoint} onChange={e => setDraft({...draft, endpoint:e.target.value})} placeholder="例如：http://192.168.1.10:8635"/></label></div>
       <div className="connection-form-row"><label>用户名<input value={draft.username} onChange={e => setDraft({...draft, username:e.target.value})} placeholder="请输入实例用户名"/></label><label>密码<div className="password-field"><input type={showPassword?'text':'password'} value={draft.password || ''} onChange={e => setDraft({...draft, password:e.target.value})} autoComplete="current-password"/><button type="button" onClick={()=>setShowPassword(current=>!current)} aria-label={showPassword?'隐藏密码':'显示密码'}>{showPassword?'隐藏':'显示'}</button></div></label></div>
-      <fieldset className="connection-options"><legend>连接选项</legend><label className="connection-option"><input type="checkbox" checked={draft.autoLogin} onChange={e => setDraft({...draft, autoLogin:e.target.checked})}/><span><b>启动时自动连接</b><small>打开客户端后自动连接此实例</small></span></label><label className="connection-option"><input type="checkbox" checked={draft.readOnly} onChange={e => setDraft({...draft, readOnly:e.target.checked})}/><span><b>只读模式</b><small>禁止写入；当前客户端仅允许查询类命令</small></span></label>{protocol === 'https' && <label className="connection-option warning-option"><input type="checkbox" checked={draft.insecureSkipVerify} onChange={e => setDraft({...draft, insecureSkipVerify:e.target.checked})}/><span><b>忽略 TLS 证书校验</b><small>仅用于可信网络中的自签名证书</small></span></label>}</fieldset>
+      <fieldset className="connection-options"><legend>连接选项</legend><label className="connection-option"><input type="checkbox" checked={draft.autoLogin} onChange={e => setDraft({...draft, autoLogin:e.target.checked})}/><span><b>启动时自动连接</b><small>打开客户端后自动连接此实例</small></span></label><div className="connection-option policy-option" role="status"><span><b>{draft.readOnly ? '生产环境 · 强制只读' : '测试 / 开发环境 · 允许写入'}</b><small>写入权限由环境决定，不能手动修改。</small></span></div>{protocol === 'https' && <label className="connection-option warning-option"><input type="checkbox" checked={draft.insecureSkipVerify} onChange={e => setDraft({...draft, insecureSkipVerify:e.target.checked})}/><span><b>忽略 TLS 证书校验</b><small>仅用于可信网络中的自签名证书</small></span></label>}</fieldset>
     </div>
     {testResult&&<div className={`connection-test-result ${testSucceeded?'is-success':'is-error'}`} role={testSucceeded?'status':'alert'}><span className="connection-test-result-mark" aria-hidden="true">{testSucceeded?'✓':'!'}</span><div className="connection-test-result-copy"><strong>{testSucceeded?'连接成功':'连接失败'}</strong><p>{testResultDetail}</p></div><button type="button" onClick={()=>void copyTestResult()}>{testResultCopied?'已复制':'复制详情'}</button></div>}
     <div className="connection-dialog-actions"><button disabled={testing} onClick={()=>void testConnection()}>{testing?'正在测试…':'测试连接'}</button><div className="connection-primary-actions">{draft.id&&<><button onClick={()=>onDuplicate(draft)}>复制</button><button className="danger" onClick={()=>onDelete(draft)}>删除</button></>}<button onClick={onClose}>取消</button><button className="primary" onClick={() => onSave({...connectionForTransport(draft), id:draft.id || crypto.randomUUID()})}>保存并连接</button></div></div>

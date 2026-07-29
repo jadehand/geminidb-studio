@@ -1,4 +1,5 @@
 import type { Connection } from './types'
+import { normalizeConnectionWritePolicy } from './write-policy.ts'
 
 export const NEW_INFLUX_CONNECTION: Connection = {
   id: '',
@@ -15,4 +16,8 @@ export const NEW_INFLUX_CONNECTION: Connection = {
 
 export function removeMockConnections(connections: Connection[]) {
   return connections.filter(connection => connection.mode === 'influx')
+}
+
+export function migrateConnections(connections: Connection[]) {
+  return removeMockConnections(connections).map(normalizeConnectionWritePolicy)
 }
