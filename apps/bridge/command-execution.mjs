@@ -1,15 +1,23 @@
 import { commandKind, validateWriteBatch } from './command-batch.mjs'
 import { assertEnvironmentWritable } from './write-policy.mjs'
 
-export async function executeWriteBatch({ script, session, database, executeInsert, executeWrite }) {
+function validatedWriteBatch({ script, session }) {
   assertEnvironmentWritable(session)
-  let statements
   try {
-    ({ statements } = validateWriteBatch(script))
+    return validateWriteBatch(script)
   } catch (error) {
     error.status ??= 400
     throw error
   }
+}
+
+export function validateWriteBatchForSession({ script, session }) {
+  const { statements, kind } = validatedWriteBatch({ script, session })
+  return { statementCount:statements.length, kind }
+}
+
+export async function executeWriteBatch({ script, session, database, executeInsert, executeWrite }) {
+  const { statements } = validatedWriteBatch({ script, session })
   let succeeded = 0
 
   for (const [index, statement] of statements.entries()) {
