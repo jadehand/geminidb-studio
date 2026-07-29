@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { bridge } from './api'
-import { measurementDataRequestKey, measurementDay, measurementNanosecondsToBeijing, measurementRangeFromBeijingTime, nextMeasurementOffset, normalizeMeasurementDataOptions, type MeasurementDataOptions, type MeasurementDataPage, type ReadyConnectionSession } from './measurement-data'
+import { measurementDataPageForRequest, measurementDataRequestKey, measurementDay, measurementNanosecondsToBeijing, measurementRangeFromBeijingTime, nextMeasurementOffset, normalizeMeasurementDataOptions, type MeasurementDataOptions, type MeasurementDataResult, type ReadyConnectionSession } from './measurement-data'
 import { ResultGridZoomControls } from './ResultGridZoomControls'
 import { stepGridZoom, useGridZoom } from './result-grid-zoom'
 import type { MeasurementDataWorkspaceTab } from './types'
@@ -24,7 +24,7 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
   const requestKey = measurementDataRequestKey(tab, readyConnectionSession, currentDatabase)
   const available = requestKey !== null
   const [options, setOptions] = useState<MeasurementDataOptions>(() => normalizeMeasurementDataOptions())
-  const [page, setPage] = useState<MeasurementDataPage | null>(null)
+  const [result, setResult] = useState<MeasurementDataResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [reload, setReload] = useState(0)
@@ -36,7 +36,7 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
 
   useEffect(() => {
     setOptions(normalizeMeasurementDataOptions())
-    setPage(null)
+    setResult(null)
     setError('')
     setRangeMode('whole')
   }, [tab.id])
@@ -53,7 +53,7 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
     void bridge.measurementData(tab.database, tab.measurement, options, controller.signal)
       .then(next => {
         if (disposed || controller.signal.aborted) return
-        setPage(next)
+        setResult({ requestKey, page:next })
       })
       .catch(reason => {
         if (disposed || controller.signal.aborted) return
@@ -68,6 +68,7 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
     }
   }, [requestKey, options, reload])
 
+  const page = measurementDataPageForRequest(result, requestKey)
   const tags = page?.schema.tags ?? []
   const fields = page?.schema.fields ?? []
   const points = page?.points ?? []

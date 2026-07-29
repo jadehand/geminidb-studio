@@ -155,6 +155,11 @@ export default function App() {
   const tableGroups = useMemo(() => filteredTables.reduce<Record<string, string[]>>((all, table) => { const prefix = splitTable(table).prefix; (all[prefix] ||= []).push(table); return all }, {}), [filteredTables])
 
   const toast = useCallback((text: string) => { setMessage(text); window.setTimeout(() => setMessage(''), 1800) }, [])
+  function invalidateConnectionSession() {
+    ++connectionSession.current
+    setReadyConnectionSession(null)
+    return connectionSession.current
+  }
   function invalidateWriteContext() {
     validationAbort.current?.abort()
     validationAbort.current = null
@@ -184,7 +189,7 @@ export default function App() {
     setConnectionPendingDelete(null)
     if (activeConnection === connection.id) {
       const nextId = next[0]?.id || ''
-      setReadyConnectionSession(null)
+      invalidateConnectionSession()
       setActiveConnection(nextId)
       save('gdb.activeConnection', nextId)
       if (next[0]) void connect(next[0])
@@ -195,9 +200,8 @@ export default function App() {
   function beginSidebarResize(event:React.PointerEvent<HTMLButtonElement>){event.preventDefault();const origin=event.clientX,start=sidebarWidth;setSidebarDragging(true);const move=(next:PointerEvent)=>setSidebarWidth(fitSidebarWidth(start+next.clientX-origin));const stop=(next:PointerEvent)=>{const width=fitSidebarWidth(start+next.clientX-origin);setSidebarWidth(width);save('gdb.sidebarWidth',width);setSidebarDragging(false);window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',stop)};window.addEventListener('pointermove',move);window.addEventListener('pointerup',stop)}
 
   async function connect(connection = currentConnection) {
-    if (!connection) { setReadyConnectionSession(null); return }
-    const sessionGeneration = ++connectionSession.current
-    setReadyConnectionSession(null)
+    const sessionGeneration = invalidateConnectionSession()
+    if (!connection) return
     invalidateWriteContext()
     setStatus('正在登录…')
     try {

@@ -52,6 +52,11 @@ export type ReadyConnectionSession = {
   generation: number
 }
 
+export type MeasurementDataResult = {
+  requestKey: string
+  page: MeasurementDataPage
+}
+
 export function measurementDataRequestKey(
   tab: Pick<MeasurementDataWorkspaceTab, 'connectionId' | 'database' | 'measurement'>,
   readySession: ReadyConnectionSession | null,
@@ -65,6 +70,11 @@ export function measurementDataRequestKey(
     || readySession.generation < 0
   ) return null
   return JSON.stringify([readySession.connectionId, readySession.generation, tab.database, tab.measurement])
+}
+
+export function measurementDataPageForRequest(result: MeasurementDataResult | null, requestKey: string | null) {
+  if (!result || !requestKey || result.requestKey !== requestKey) return null
+  return result.page
 }
 
 export function measurementNanosecondsToBeijing(value: unknown) {
