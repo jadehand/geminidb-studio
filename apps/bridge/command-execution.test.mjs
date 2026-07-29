@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { executeWriteBatch, validateWriteBatchForSession } from './command-execution.mjs'
+import { executeSingleQuery, executeWriteBatch, validateWriteBatchForSession } from './command-execution.mjs'
 
 test('stops after the first failed statement and reports remaining work', async () => {
   const executed = []
@@ -93,4 +93,55 @@ test('server registers validation before execution without executors', () => {
   const validationRoute = source.slice(validationStart, executionStart)
   assert.match(validationRoute, /validateWriteBatchForSession/)
   assert.doesNotMatch(validationRoute, /influxCommand|influxWrite|executeWriteBatch/)
+})
+
+test('single-query execution rejects query scripts containing writes before upstream', async () => {
+  for (const script of ['SELECT * FROM m; INSERT m value=1 1', 'SHOW MEASUREMENTS; WRITE m value=1 1']) {
+    let upstreamCalls = 0
+    await assert.rejects(
+      executeSingleQuery({ script, executeQuery:async () => { upstreamCalls++ } }),
+      error => error.code === 'MIXED_COMMAND_BATCH' && error.status === 400,
+    )
+    assert.equal(upstreamCalls, 0)
+  }
+})
+
+test('single-query execution rejects multiple queries before upstream', async () => {
+  let upstreamCalls = 0
+  await assert.rejects(
+    executeSingleQuery({ script:'SELECT * FROM m; SELECT * FROM n', executeQuery:async () => { upstreamCalls++ } }),
+    error => error.code === 'MULTI_STATEMENT_QUERY_UNSUPPORTED' && error.status === 400,
+  )
+  assert.equal(upstreamCalls, 0)
+})
+
+test('single-query execution rejects direct writes and empty scripts', async () => {
+  for (const [script, code] of [['WRITE m value=1 1', 'WRITE_REQUIRES_COMMANDS_ENDPOINT'], [' ; ', 'EMPTY_SQL']]) {
+    await assert.rejects(
+      executeSingleQuery({ script, executeQuery:async () => assert.fail('unexpected upstream query') }),
+      error => error.code === code && error.status === 400,
+    )
+  }
+})
+
+test('single-query execution forwards one query and preserves the response shape', async () => {
+  const queries = []
+  const result = await executeSingleQuery({
+    script:' SELECT value FROM cpu LIMIT 1; ',
+    executeQuery:async statement => {
+      queries.push(statement)
+      return { rows:[{ value:42 }], durationMs:7 }
+    },
+  })
+  assert.deepEqual(queries, ['SELECT value FROM cpu LIMIT 1'])
+  assert.deepEqual(result, { rows:[{ value:42 }], rowCount:1, durationMs:7, hasMore:false })
+})
+
+test('server query route uses the single-query guard', () => {
+  const source = readFileSync(new URL('./server.mjs', import.meta.url), 'utf8')
+  const queryStart = source.indexOf("url.pathname==='/query'")
+  const nextRoute = source.indexOf("url.pathname==='/claude/probe'", queryStart)
+  assert.ok(queryStart >= 0)
+  assert.ok(nextRoute > queryStart)
+  assert.match(source.slice(queryStart, nextRoute), /executeSingleQuery/)
 })
