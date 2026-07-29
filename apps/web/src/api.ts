@@ -1,4 +1,4 @@
-import type { ClaudeDiagnosis, ClaudeSettings, MeasurementSchema, QueryResponse } from './types'
+import type { ClaudeDiagnosis, ClaudeSettings, CommandBatchResponse, CommandBatchValidation, MeasurementSchema, QueryResponse } from './types'
 import type { BulkJobStatus, BulkPlanRequest, BulkPreview } from './bulk-data.ts'
 import { isTauri } from '@tauri-apps/api/core'
 
@@ -33,6 +33,8 @@ export const bridge = {
   bulkJob: (id: string, signal?:AbortSignal) => request<BulkJobStatus>(`/bulk-jobs/${encodeURIComponent(id)}`, { signal }),
   resumeBulkJob: (id: string) => request<BulkJobStatus>(`/bulk-jobs/${encodeURIComponent(id)}/resume`, { method:'POST' }),
   cancelBulkJob: (id: string, signal?:AbortSignal) => request<BulkJobStatus>(`/bulk-jobs/${encodeURIComponent(id)}/cancel`, { method:'POST', signal }),
+  validateCommands: (script: string, signal?: AbortSignal) => request<CommandBatchValidation>('/commands/validate', { method:'POST', body:JSON.stringify({ script }), signal }),
+  executeCommands: (database: string, script: string, signal?: AbortSignal) => request<CommandBatchResponse>('/commands', { method:'POST', body:JSON.stringify({ database, script }), signal }),
   query: (database: string, sql: string, signal?: AbortSignal) => request<QueryResponse>('/query', { method: 'POST', body: JSON.stringify({ database, sql, maxRows: 1000, timeoutMs: 30000 }), signal }),
   ask: (context: { database:string; measurement:string; sql:string; error:string; schema:MeasurementSchema; localIssues:{level:string;message:string}[] }, settings: ClaudeSettings, apiKey: string, signal?:AbortSignal) => request<ClaudeDiagnosis>('/ask', { method: 'POST', body: JSON.stringify({ context, settings, apiKey }),signal }),
   probeClaude: (settings: ClaudeSettings) => request<{ready:boolean;version?:string;message:string}>('/claude/probe',{method:'POST',body:JSON.stringify({settings})})

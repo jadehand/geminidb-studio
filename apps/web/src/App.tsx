@@ -22,6 +22,8 @@ import { initialTourStatus, TOUR_STEPS, TOUR_STORAGE_KEY, type TourStatus } from
 import { bulkEntryState } from './bulk-data'
 import { isUnfinishedBulkJob, waitForBulkJobTerminal } from './app-close'
 import DeleteConnectionDialog from './DeleteConnectionDialog'
+import WriteCommandDialog from './WriteCommandDialog'
+import { formatCommandSummary, isWriteScript } from './write-command'
 import type { BulkJobStatus, ClaudeDiagnosis, ClaudeSettings, Connection, Execution, Favorite, MeasurementSchema, QueryRow } from './types'
 const QueryEditor = lazy(() => import('./QueryEditor'))
 
@@ -79,6 +81,7 @@ export default function App() {
   const [connectionPendingDelete, setConnectionPendingDelete] = useState<Connection | null>(null)
   const [favoriteDialog, setFavoriteDialog] = useState(false)
   const [timeDialog, setTimeDialog] = useState(false)
+  const [writeConfirmation, setWriteConfirmation] = useState<{ command:string; statementCount:number } | null>(null)
   const [bulkWizardOpen, setBulkWizardOpen] = useState(false)
   const [activeBulkJob, setActiveBulkJob] = useState<BulkJobStatus | null>(null)
   const [bulkCloseGuardOpen, setBulkCloseGuardOpen] = useState(false)
@@ -284,11 +287,40 @@ export default function App() {
     setHistory(previous => { const next = [{ id: crypto.randomUUID(), executedAt: Date.now(), sql: command, durationMs: Math.round(duration), status: executionStatus, result, database: db }, ...previous].slice(0, 100); save('gdb.history', next); return next })
   }
 
+  async function executeWriteCommand() {
+    const confirmation = writeConfirmation
+    if (!confirmation || running) return
+    const { command } = confirmation
+    setWriteConfirmation(null)
+    const controller = new AbortController(); queryAbort.current = controller; cancelReason.current = null
+    const timeout = window.setTimeout(() => { cancelReason.current = 'timeout'; controller.abort() }, 30000)
+    setRunning(true); setView('result'); setResultStatus('RUNNING'); const started = performance.now()
+    try {
+      const data = await bridge.executeCommands(database, command, controller.signal); const duration = performance.now() - started
+      const summary = formatCommandSummary(data.summary)
+      const partialFailure = data.summary.failed > 0
+      setRows([]); setLastError(data.error || ''); setResultStatus(partialFailure ? 'ERROR' : 'SUCCESS'); setResultMeta(summary)
+      addHistory(command, duration, partialFailure ? 'error' : 'success', data.error ? `${summary} · ${data.error}` : summary)
+      toast(summary)
+    } catch (error) {
+      const cancelled = error instanceof DOMException && error.name === 'AbortError'
+      const text = cancelled ? (cancelReason.current === 'timeout' ? '写入超过 30 秒，已取消' : '写入已取消') : error instanceof Error ? error.message : '写入失败'
+      setRows([]); setLastError(text); setResultStatus(cancelled ? 'CANCELLED' : 'ERROR'); setResultMeta(`${Math.round(performance.now() - started)} ms`); addHistory(command, performance.now() - started, cancelled ? 'cancelled' : 'error', text); toast(text)
+    } finally { window.clearTimeout(timeout); queryAbort.current = null; cancelReason.current = null; setRunning(false) }
+  }
+
   async function runQuery(commandOverride?: string) {
     const command = (commandOverride ?? sql).trim(); if (!command || running) return
-    const isWrite = /^write\s+/i.test(command)
-    if (isWrite && currentConnection?.readOnly) return toast('当前连接为只读，不能执行 WRITE')
-    if (isWrite && !window.confirm(`确认向 ${database} 写入数据？\n\n${command}`)) return
+    if (isWriteScript(command)) {
+      if (currentConnection?.readOnly) return toast('当前连接为只读，不能执行写入')
+      try {
+        const validation = await bridge.validateCommands(command)
+        setWriteConfirmation({ command, statementCount: validation.statementCount })
+      } catch (error) {
+        toast(error instanceof Error ? error.message : '写入命令验证失败')
+      }
+      return
+    }
     const controller = new AbortController(); queryAbort.current = controller; cancelReason.current = null
     const timeout = window.setTimeout(() => { cancelReason.current = 'timeout'; controller.abort() }, 30000)
     setRunning(true); setView('result'); setResultStatus('RUNNING'); const started = performance.now()
@@ -352,6 +384,7 @@ export default function App() {
 
     {connectionDialog && <ConnectionDialog connection={connectionDialog} onClose={() => setConnectionDialog(null)} onSave={connection => { const next = connections.some(c => c.id === connection.id) ? connections.map(c => c.id === connection.id ? connection : c) : [connection, ...connections]; persistConnections(next); setActiveConnection(connection.id); save('gdb.activeConnection', connection.id); setConnectionDialog(null); void connect(connection) }} onDuplicate={connection=>{const copy={...connection,id:crypto.randomUUID(),name:`${connection.name} 副本`};persistConnections([copy,...connections]);setConnectionDialog(copy)}} onDelete={connection=>{setConnectionDialog(null);setConnectionPendingDelete(connection)}}/>}
     {connectionPendingDelete && <DeleteConnectionDialog connection={connectionPendingDelete} onCancel={() => setConnectionPendingDelete(null)} onConfirm={confirmDeleteConnection}/>}
+    {writeConfirmation && <WriteCommandDialog database={database} statementCount={writeConfirmation.statementCount} onCancel={() => setWriteConfirmation(null)} onConfirm={() => void executeWriteCommand()}/>}
     {favoriteDialog&&<FavoriteDialog database={database} sql={sql} onClose={()=>setFavoriteDialog(false)} onSave={confirmFavorite}/>}
     {recoveryOpen&&<div className="modal"><div className="dialog recovery-dialog"><h2>恢复查询工作区</h2><p>检测到上次未正常关闭。可以恢复查询页签和目录位置；不会自动执行 SQL。</p><div className="dialog-actions"><button onClick={discardWorkspace}>重新开始</button><button className="primary" onClick={restoreWorkspace}>恢复工作区</button></div></div></div>}
     {timeDialog && <TimeDialog onClose={() => setTimeDialog(false)}/>} 
