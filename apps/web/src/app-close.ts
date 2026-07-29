@@ -2,8 +2,15 @@ import type { BulkJobStatus } from './types.ts'
 
 const UNFINISHED = new Set<BulkJobStatus['status']>(['queued','running','retrying','paused','cancelling'])
 
+export type AppCloseStep = 'measurement' | 'bulk' | 'close'
+
 export function isUnfinishedBulkJob(status?:BulkJobStatus['status']) {
   return status ? UNFINISHED.has(status) : false
+}
+
+export function appCloseStep({ hasMeasurementDrafts, bulkStatus }: { hasMeasurementDrafts: boolean; bulkStatus?: BulkJobStatus['status'] }): AppCloseStep {
+  if (hasMeasurementDrafts) return 'measurement'
+  return isUnfinishedBulkJob(bulkStatus) ? 'bulk' : 'close'
 }
 
 export function nextPollDelay(status:BulkJobStatus['status']) {

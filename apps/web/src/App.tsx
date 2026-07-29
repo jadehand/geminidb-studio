@@ -20,7 +20,7 @@ import SchemaDialog from './SchemaDialog'
 import BulkDataWizard from './BulkDataWizard'
 import { initialTourStatus, TOUR_STEPS, TOUR_STORAGE_KEY, type TourStatus } from './onboarding'
 import { bulkEntryState } from './bulk-data'
-import { isUnfinishedBulkJob, waitForBulkJobTerminal } from './app-close'
+import { appCloseStep, isUnfinishedBulkJob, waitForBulkJobTerminal } from './app-close'
 import DeleteConnectionDialog from './DeleteConnectionDialog'
 import WriteCommandDialog from './WriteCommandDialog'
 import { formatCommandSummary, isWriteScript } from './write-command'
@@ -136,6 +136,7 @@ export default function App() {
   const activeWorkspaceTabIdRef = useRef(activeTabId)
   const measurementPendingAction = useRef<PendingMeasurementAction>(null)
   const measurementSubmitters = useRef(new Map<string, () => Promise<boolean>>())
+  const requestAppCloseRef = useRef<() => void>(() => {})
   activeBulkJobRef.current=activeBulkJob
   measurementDraftsRef.current=measurementDraftsByTab
   workspaceTabsRef.current=workspaceTabs
@@ -200,7 +201,7 @@ export default function App() {
     measurementDraftsRef.current = store
     setMeasurementDraftsByTab(store)
   }
-  function firstDirtyMeasurementTab() { return workspaceTabs.find(tab => tab.kind === 'measurement-data' && hasMeasurementTabDrafts(measurementDraftsRef.current as MeasurementTabDrafts, tab.id))?.id ?? null }
+  function firstDirtyMeasurementTab() { return workspaceTabsRef.current.find(tab => tab.kind === 'measurement-data' && hasMeasurementTabDrafts(measurementDraftsRef.current as MeasurementTabDrafts, tab.id))?.id ?? null }
   function clearMeasurementGuard() { measurementPendingAction.current = null; setMeasurementGuardTabId(null); setMeasurementGuardAll(false); setMeasurementGuardSubmitting(false); setMeasurementGuardError('') }
   function requestMeasurementAction(tabId: string, hasDrafts: boolean, continuation: () => void, requireAll = false) {
     const queued = queueMeasurementAction(measurementPendingAction.current, hasDrafts, continuation)
@@ -212,9 +213,23 @@ export default function App() {
   function guardAllMeasurementDrafts(continuation: () => void) {
     const dirtyTabId = firstDirtyMeasurementTab()
     if (!dirtyTabId) { continuation(); return }
-    if (dirtyTabId !== activeTabId) selectQueryTab(dirtyTabId)
+    if (dirtyTabId !== activeWorkspaceTabIdRef.current) selectQueryTab(dirtyTabId)
     requestMeasurementAction(dirtyTabId, true, continuation, true)
   }
+  function requestAppClose() {
+    const step = appCloseStep({ hasMeasurementDrafts: firstDirtyMeasurementTab() !== null, bulkStatus: activeBulkJobRef.current?.status })
+    if (step === 'measurement') {
+      guardAllMeasurementDrafts(() => requestAppCloseRef.current())
+      return
+    }
+    if (step === 'bulk') {
+      setBulkCloseGuardOpen(true)
+      return
+    }
+    endSession()
+    void destroyDesktopWindow()
+  }
+  requestAppCloseRef.current = requestAppClose
   function registerMeasurementSubmitter(tabId: string, submit: (() => Promise<boolean>) | null) {
     if (submit) measurementSubmitters.current.set(tabId, submit)
     else measurementSubmitters.current.delete(tabId)
@@ -339,12 +354,16 @@ export default function App() {
     if (currentConnection.autoLogin) void connectNow(currentConnection)
   }, [])
   useEffect(()=>{
-    const close=(event:BeforeUnloadEvent)=>{if(isUnfinishedBulkJob(activeBulkJobRef.current?.status)){event.preventDefault();event.returnValue='';return}endSession()}
+    const close=(event:BeforeUnloadEvent)=>{
+      const step = appCloseStep({ hasMeasurementDrafts: firstDirtyMeasurementTab() !== null, bulkStatus: activeBulkJobRef.current?.status })
+      if(step !== 'close'){event.preventDefault();event.returnValue='';return}
+      endSession()
+    }
     window.addEventListener('beforeunload',close)
     let disposed=false,unlisten:(()=>void)|undefined
     void registerDesktopCloseGuard(
-      ()=>isUnfinishedBulkJob(activeBulkJobRef.current?.status),
-      ()=>setBulkCloseGuardOpen(true),
+      ()=>appCloseStep({ hasMeasurementDrafts: firstDirtyMeasurementTab() !== null, bulkStatus: activeBulkJobRef.current?.status }) !== 'close',
+      ()=>requestAppCloseRef.current(),
     ).then(next=>{if(disposed)next();else unlisten=next})
     return()=>{disposed=true;unlisten?.();window.removeEventListener('beforeunload',close)}
   },[])
