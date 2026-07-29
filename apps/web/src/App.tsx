@@ -24,7 +24,7 @@ import { isUnfinishedBulkJob, waitForBulkJobTerminal } from './app-close'
 import DeleteConnectionDialog from './DeleteConnectionDialog'
 import WriteCommandDialog from './WriteCommandDialog'
 import { formatCommandSummary, isWriteScript } from './write-command'
-import { createWriteExecutionLock, isWriteConfirmationCurrent, type WriteConfirmation } from './write-command-guard'
+import { createWriteExecutionLock, isWriteConfirmationCurrent, isWriteExecutionCurrent, type WriteConfirmation } from './write-command-guard'
 import type { BulkJobStatus, ClaudeDiagnosis, ClaudeSettings, Connection, Execution, Favorite, MeasurementSchema, QueryRow } from './types'
 const QueryEditor = lazy(() => import('./QueryEditor'))
 
@@ -74,8 +74,11 @@ export default function App() {
   const [message, setMessage] = useState('')
   const [running, setRunning] = useState(false)
   const queryAbort = useRef<AbortController | null>(null)
+  const writeAbort = useRef<AbortController | null>(null)
   const validationAbort = useRef<AbortController | null>(null)
   const validationRequest = useRef(0)
+  const writeExecutionRequest = useRef(0)
+  const writeContextVersion = useRef(0)
   const writeExecutionLock = useRef(createWriteExecutionLock())
   const connectionSession = useRef(0)
   const currentConnectionRef = useRef<Connection | undefined>(undefined)
@@ -84,6 +87,7 @@ export default function App() {
   const schemaPending = useRef(new Map<string, Promise<MeasurementSchema>>())
   const schemaRequest = useRef(0)
   const cancelReason = useRef<'user' | 'timeout' | null>(null)
+  const writeCancelReason = useRef<'user' | 'timeout' | 'context' | null>(null)
   const [connectionDialog, setConnectionDialog] = useState<Connection | null>(null)
   const [connectionPendingDelete, setConnectionPendingDelete] = useState<Connection | null>(null)
   const [favoriteDialog, setFavoriteDialog] = useState(false)
@@ -120,10 +124,7 @@ export default function App() {
   const sql = activeQueryTab?.sql || ''
   const filteredTables = useMemo(() => filterDayTables(tables,dayRange).filter(t => t.toLowerCase().includes(filter.toLowerCase())), [tables, filter, dayRange])
   useEffect(() => {
-    validationAbort.current?.abort()
-    validationAbort.current = null
-    validationRequest.current++
-    setWriteConfirmation(null)
+    invalidateWriteContext()
   }, [database, currentConnection?.id, currentConnection?.environment])
   const resolveSchema = useCallback(async (table:string) => {
     const key = `${activeConnection}\u0000${database}\u0000${table}`
@@ -141,6 +142,18 @@ export default function App() {
   const tableGroups = useMemo(() => filteredTables.reduce<Record<string, string[]>>((all, table) => { const prefix = splitTable(table).prefix; (all[prefix] ||= []).push(table); return all }, {}), [filteredTables])
 
   function toast(text: string) { setMessage(text); window.setTimeout(() => setMessage(''), 1800) }
+  function invalidateWriteContext() {
+    validationAbort.current?.abort()
+    validationAbort.current = null
+    validationRequest.current++
+    writeContextVersion.current++
+    writeExecutionRequest.current++
+    const hadActiveWrite = Boolean(writeAbort.current)
+    writeCancelReason.current = 'context'
+    writeAbort.current?.abort()
+    setWriteConfirmation(null)
+    if (hadActiveWrite) { setRunning(false); setResultStatus('CANCELLED'); setResultMeta('写入因连接或 Database 变化已取消') }
+  }
   function persistQueryTabs(next: QueryTab[]) { setQueryTabs(next); save('gdb.queryTabs',next) }
   function setSql(nextSql: string) { persistQueryTabs(queryTabs.map(tab => tab.id === activeQueryTab.id ? {...tab,sql:nextSql} : tab)) }
   function addQueryTab() { const id=crypto.randomUUID(),next=[...queryTabs,{id,name:`查询 ${queryTabs.length+1}`,sql:''}];persistQueryTabs(next);setActiveTabId(id);save('gdb.activeQueryTab',id) }
@@ -170,10 +183,7 @@ export default function App() {
   async function connect(connection = currentConnection) {
     if (!connection) return
     const sessionGeneration = ++connectionSession.current
-    validationAbort.current?.abort()
-    validationAbort.current = null
-    validationRequest.current++
-    setWriteConfirmation(null)
+    invalidateWriteContext()
     setStatus('正在登录…')
     try {
       const transport=connectionForTransport(connection)
@@ -316,22 +326,38 @@ export default function App() {
       return toast('连接或 Database 已变化，请重新验证写入命令')
     }
     if (!writeExecutionLock.current.tryAcquire()) return
-    const { command } = confirmation
-    const controller = new AbortController(); queryAbort.current = controller; cancelReason.current = null
-    const timeout = window.setTimeout(() => { cancelReason.current = 'timeout'; controller.abort() }, 30000)
+    const executionId = ++writeExecutionRequest.current
+    const snapshot = { ...confirmation, executionId, contextVersion:writeContextVersion.current }
+    const isCurrentExecution = () => isWriteExecutionCurrent(snapshot, {
+      connection:currentConnectionRef.current,
+      database:databaseRef.current,
+      sessionGeneration:connectionSession.current,
+      executionId:writeExecutionRequest.current,
+      contextVersion:writeContextVersion.current,
+    })
+    const { command } = snapshot
+    const controller = new AbortController(); writeAbort.current = controller; writeCancelReason.current = null
+    const timeout = window.setTimeout(() => { writeCancelReason.current = 'timeout'; controller.abort() }, 30000)
     setRunning(true); setView('result'); setResultStatus('RUNNING'); const started = performance.now()
     try {
-      const data = await bridge.executeCommands(confirmation.database, command, controller.signal); const duration = performance.now() - started
+      const data = await bridge.executeCommands(snapshot.database, command, controller.signal); const duration = performance.now() - started
+      if (!isCurrentExecution()) return
       const summary = formatCommandSummary(data.summary)
       const partialFailure = data.summary.failed > 0
       setRows([]); setLastError(data.error || ''); setResultStatus(partialFailure ? 'ERROR' : 'SUCCESS'); setResultMeta(summary)
-      addHistory(command, duration, partialFailure ? 'error' : 'success', data.error ? `${summary} · ${data.error}` : summary)
+      addHistory(command, duration, partialFailure ? 'error' : 'success', data.error ? `${summary} · ${data.error}` : summary, snapshot.database)
       toast(summary)
     } catch (error) {
+      if (!isCurrentExecution()) return
       const cancelled = error instanceof DOMException && error.name === 'AbortError'
-      const text = cancelled ? (cancelReason.current === 'timeout' ? '写入超过 30 秒，已取消' : '写入已取消') : error instanceof Error ? error.message : '写入失败'
-      setRows([]); setLastError(text); setResultStatus(cancelled ? 'CANCELLED' : 'ERROR'); setResultMeta(`${Math.round(performance.now() - started)} ms`); addHistory(command, performance.now() - started, cancelled ? 'cancelled' : 'error', text); toast(text)
-    } finally { window.clearTimeout(timeout); queryAbort.current = null; cancelReason.current = null; writeExecutionLock.current.release(); setWriteConfirmation(null); setRunning(false) }
+      const text = cancelled ? (writeCancelReason.current === 'timeout' ? '写入超过 30 秒，已取消' : '写入已取消') : error instanceof Error ? error.message : '写入失败'
+      setRows([]); setLastError(text); setResultStatus(cancelled ? 'CANCELLED' : 'ERROR'); setResultMeta(`${Math.round(performance.now() - started)} ms`); addHistory(command, performance.now() - started, cancelled ? 'cancelled' : 'error', text, snapshot.database); toast(text)
+    } finally {
+      window.clearTimeout(timeout)
+      if (writeAbort.current === controller) { writeAbort.current = null; writeCancelReason.current = null }
+      writeExecutionLock.current.release()
+      if (isCurrentExecution()) { setWriteConfirmation(null); setRunning(false) }
+    }
   }
 
   async function runQuery(commandOverride?: string) {
@@ -369,7 +395,10 @@ export default function App() {
       setRows([]); setLastError(text); setResultStatus(cancelled ? 'CANCELLED' : 'ERROR'); setResultMeta(`${Math.round(performance.now() - started)} ms`); addHistory(command, performance.now() - started, cancelled ? 'cancelled' : 'error', text); toast(text)
     } finally { window.clearTimeout(timeout); queryAbort.current = null; cancelReason.current = null; setRunning(false) }
   }
-  function cancelQuery() { cancelReason.current = 'user'; queryAbort.current?.abort() }
+  function cancelQuery() {
+    if (writeAbort.current) { writeCancelReason.current = 'user'; writeAbort.current.abort() }
+    if (queryAbort.current) { cancelReason.current = 'user'; queryAbort.current.abort() }
+  }
   async function retryBridge(){setBridgeRetrying(true);try{const next=await restartDesktopBridge();setBridgeStatus(next);if(next.running){toast('Bridge 已重新启动');void connect()}else toast(next.error||'Bridge 重启失败')}catch(error){toast(error instanceof Error?error.message:'Bridge 重启失败')}finally{setBridgeRetrying(false)}}
 
   function saveFavorite() { setFavoriteDialog(true) }

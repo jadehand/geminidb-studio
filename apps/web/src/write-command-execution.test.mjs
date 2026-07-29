@@ -22,7 +22,7 @@ test('query editor validates writes before showing confirmation and keeps produc
 
 test('confirmed write batch uses one command request and records partial failure as an error', () => {
   const writeExecution = appSource.slice(appSource.indexOf('async function executeWriteCommand'), appSource.indexOf('function cancelQuery'))
-  assert.match(writeExecution, /bridge\.executeCommands\(confirmation\.database, command, controller\.signal\)/)
+  assert.match(writeExecution, /bridge\.executeCommands\(snapshot\.database, command, controller\.signal\)/)
   assert.match(writeExecution, /formatCommandSummary\(data\.summary\)/)
   assert.match(writeExecution, /const partialFailure = data\.summary\.failed > 0/)
   assert.match(writeExecution, /partialFailure \? 'error' : 'success'/)
