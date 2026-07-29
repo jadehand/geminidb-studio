@@ -50,6 +50,7 @@ export type MeasurementDataPage = {
 export type ReadyConnectionSession = {
   connectionId: string
   generation: number
+  environment: 'prod' | 'test' | 'dev'
 }
 
 export type MeasurementDataResult = {

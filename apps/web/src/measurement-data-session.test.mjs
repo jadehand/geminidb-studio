@@ -54,7 +54,7 @@ test('App publishes readiness only after the current login catalog has fully loa
 
   assert.match(app, /const \[readyConnectionSession,\s*setReadyConnectionSession\]/)
   assert.match(app, /const sessionGeneration = invalidateConnectionSession\(\)[\s\S]*await bridge\.login/)
-  assert.match(app, /const nextTables=await bridge\.tables\(nextDb\)[\s\S]*if \(sessionGeneration !== connectionSession\.current\) return[\s\S]*setReadyConnectionSession\(\{connectionId:connection\.id,generation:sessionGeneration\}\)/)
+  assert.match(app, /const nextTables=await bridge\.tables\(nextDb\)[\s\S]*if \(sessionGeneration !== connectionSession\.current\) return[\s\S]*setReadyConnectionSession\(\{connectionId:connection\.id,generation:sessionGeneration,environment:connection\.environment \?\? 'dev'\}\)/)
   assert.match(app, /<MeasurementDataView[\s\S]*readyConnectionSession=\{readyConnectionSession\}/)
   assert.match(view, /measurementDataRequestKey/)
   assert.match(view, /\[requestKey, options, reload\]/)

@@ -213,7 +213,7 @@ export default function App() {
       const nextTables=await bridge.tables(nextDb),restoredTable=nextDb===database&&nextTables.includes(selectedTable)?selectedTable:''
       if (sessionGeneration !== connectionSession.current) return
       schemaRequest.current += 1; setSelectedTable(restoredTable); setSchema({ fields: [], tags: [] }); setSchemaLoading(false)
-      setReadyConnectionSession({connectionId:connection.id,generation:sessionGeneration})
+      setReadyConnectionSession({connectionId:connection.id,generation:sessionGeneration,environment:connection.environment ?? 'dev'})
       setDatabases(list); setDatabase(nextDb); setTables(nextTables); setStatus(`${connection.name} 已连接`); toast(restoredTable?'已恢复上次查询工作区':'已登录并载入数据目录');if(restoredTable)void loadSchema(restoredTable)
     } catch (error) { if (sessionGeneration !== connectionSession.current) return; setReadyConnectionSession(null); setStatus('连接失败'); toast(error instanceof Error ? error.message : '连接失败') }
   }

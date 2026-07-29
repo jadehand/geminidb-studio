@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { bridge } from './api'
 import { measurementDataPageForRequest, measurementDataRequestKey, measurementDay, measurementNanosecondsToBeijing, measurementRangeFromBeijingTime, nextMeasurementOffset, normalizeMeasurementDataOptions, type MeasurementDataOptions, type MeasurementDataResult, type ReadyConnectionSession } from './measurement-data'
+import EditableFieldCell from './EditableFieldCell'
+import { applyUpdateResult, setDraftValue, updatesFromDraft, type MeasurementDraftState } from './measurement-editing'
 import { ResultGridZoomControls } from './ResultGridZoomControls'
 import { stepGridZoom, useGridZoom } from './result-grid-zoom'
 import type { MeasurementDataWorkspaceTab } from './types'
@@ -33,6 +35,12 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
   const [endTime, setEndTime] = useState('23:59:59.999999999')
   const [rangeError, setRangeError] = useState('')
   const [zoom, setZoom] = useGridZoom()
+  const [draftsByRequest, setDraftsByRequest] = useState<Record<string, MeasurementDraftState>>({})
+  const [submitting, setSubmitting] = useState(false)
+  const [submitStatus, setSubmitStatus] = useState('')
+  const requestKeyRef = useRef(requestKey)
+  const submitController = useRef<AbortController | null>(null)
+  requestKeyRef.current = requestKey
 
   useEffect(() => {
     setOptions(normalizeMeasurementDataOptions())
@@ -40,6 +48,8 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
     setError('')
     setRangeMode('whole')
   }, [tab.id])
+
+  useEffect(() => () => submitController.current?.abort(), [requestKey])
 
   useEffect(() => {
     if (!requestKey) {
@@ -75,6 +85,10 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
   const displayedPage = page?.page ?? null
   const pageOffset = displayedPage?.offset ?? 0
   const hasMore = displayedPage?.hasMore ?? false
+  const editable = available && readyConnectionSession?.environment !== 'prod'
+  const drafts = requestKey ? draftsByRequest[requestKey] ?? {} : {}
+  const draftCount = Object.keys(drafts).length
+  const hasDrafts = draftCount > 0
 
   function setWholeDay() {
     setRangeMode('whole')
@@ -100,6 +114,46 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
     }))
   }
 
+  function updateDraft(point: typeof points[number], field: typeof fields[number], value: string | number | boolean) {
+    if (!requestKey) return
+    setDraftsByRequest(current => ({ ...current, [requestKey]: setDraftValue(current[requestKey] ?? {}, point, field, value) }))
+  }
+
+  function discardDrafts() {
+    if (!requestKey) return
+    setDraftsByRequest(current => ({ ...current, [requestKey]: {} }))
+    setSubmitStatus('')
+  }
+
+  function submitDrafts() {
+    if (!requestKey || !page || submitting || !editable) return
+    const updates = updatesFromDraft(drafts, points, page.schema)
+    if (updates.length === 0) {
+      setSubmitStatus('没有可提交的修改。请刷新后检查仍保留的草稿。')
+      return
+    }
+    const submissionKey = requestKey
+    const controller = new AbortController()
+    submitController.current?.abort()
+    submitController.current = controller
+    setSubmitting(true)
+    setSubmitStatus('')
+    void bridge.updateMeasurementData({ database: tab.database, measurement: tab.measurement, updates }, controller.signal)
+      .then(next => {
+        if (controller.signal.aborted || requestKeyRef.current !== submissionKey) return
+        setDraftsByRequest(current => ({ ...current, [submissionKey]: applyUpdateResult(current[submissionKey] ?? {}, next) }))
+        setSubmitStatus(`成功 ${next.summary.succeeded} 项 · 失败 ${next.summary.failed} 项 · 未执行 ${next.summary.skipped} 项`)
+        setReload(value => value + 1)
+      })
+      .catch(reason => {
+        if (controller.signal.aborted || requestKeyRef.current !== submissionKey) return
+        setSubmitStatus(reason instanceof Error ? `提交失败：${reason.message}` : '提交失败')
+      })
+      .finally(() => {
+        if (!controller.signal.aborted && requestKeyRef.current === submissionKey) setSubmitting(false)
+      })
+  }
+
   if (!available) {
     return <section className="measurement-data-unavailable" role="status"><div><h1>数据上下文不可用</h1><p>此数据页签属于 {tab.database} / {tab.measurement}，当前连接或 Database 已变化；不会使用当前上下文读取其他数据。</p></div></section>
   }
@@ -110,32 +164,34 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
     setZoom(stepGridZoom(zoom, event.deltaY < 0 ? 1 : -1))
   }}>
     <header className="measurement-data-head">
-      <div><h1>{tab.measurement}</h1><p>{tab.database} · 只读数据视图 · 服务端按时间倒序</p></div>
+      <div><h1>{tab.measurement}</h1><p>{tab.database} · {editable ? '可编辑数据视图' : '生产环境只读'} · 服务端按时间倒序</p></div>
       <ResultGridZoomControls zoom={zoom} onChange={setZoom}/>
     </header>
     <div className="measurement-data-toolbar">
       <div className="measurement-range-controls" role="group" aria-label="时间范围">
-        <button type="button" className={rangeMode === 'whole' ? 'active' : ''} aria-pressed={rangeMode === 'whole'} onClick={setWholeDay}>全天</button>
-        <button type="button" className={rangeMode === 'custom' ? 'active' : ''} aria-pressed={rangeMode === 'custom'} onClick={() => setRangeMode('custom')} disabled={!day}>自定义时段</button>
+        <button type="button" className={rangeMode === 'whole' ? 'active' : ''} aria-pressed={rangeMode === 'whole'} onClick={setWholeDay} disabled={hasDrafts}>全天</button>
+        <button type="button" className={rangeMode === 'custom' ? 'active' : ''} aria-pressed={rangeMode === 'custom'} onClick={() => setRangeMode('custom')} disabled={!day || hasDrafts}>自定义时段</button>
         {rangeMode === 'custom' && <div className="measurement-custom-range">
           <label>北京时间 <input value={startTime} onChange={event => setStartTime(event.target.value)} placeholder="00:00:00" aria-label="开始北京时间"/></label>
           <span>至</span>
           <label><input value={endTime} onChange={event => setEndTime(event.target.value)} placeholder="23:59:59.999999999" aria-label="结束北京时间"/></label>
-          <button type="button" onClick={applyCustomRange}>应用</button>
+          <button type="button" onClick={applyCustomRange} disabled={hasDrafts}>应用</button>
         </div>}
       </div>
-      <label className="measurement-page-size">每页 <select value={options.limit} onChange={event => setOptions(current => normalizeMeasurementDataOptions({ ...current, limit: Number(event.target.value) as MeasurementDataOptions['limit'], offset: 0 }))}>{PAGE_SIZES.map(size => <option key={size} value={size}>{size}</option>)}</select> 行</label>
+      <label className="measurement-page-size">每页 <select value={options.limit} disabled={hasDrafts} onChange={event => setOptions(current => normalizeMeasurementDataOptions({ ...current, limit: Number(event.target.value) as MeasurementDataOptions['limit'], offset: 0 }))}>{PAGE_SIZES.map(size => <option key={size} value={size}>{size}</option>)}</select> 行</label>
       <button type="button" onClick={() => setReload(value => value + 1)} disabled={loading}>刷新</button>
+      {editable && hasDrafts && <><button type="button" onClick={discardDrafts} disabled={submitting}>放弃修改</button><button type="button" className="primary measurement-submit" onClick={submitDrafts} disabled={submitting}>{submitting ? '正在提交…' : `↑ 提交 ${draftCount} 项修改`}</button></>}
     </div>
     {rangeMode === 'custom' && <p className="measurement-range-hint">自定义时段按北京自然日 {day?.date ?? '不可用'} 解析，范围不会跨日。</p>}
     {rangeError && <p className="measurement-range-error" role="alert">{rangeError}</p>}
     {error && <div className="measurement-data-error" role="alert"><span>{error}</span><button type="button" onClick={() => setReload(value => value + 1)}>重试</button></div>}
+    {submitStatus && <p className="measurement-submit-status" role="status">{submitStatus}</p>}
     <div className="measurement-data-grid" aria-busy={loading}>
       {loading && !page ? <div className="measurement-data-loading">正在读取数据…</div> : <div className="measurement-data-scroll" tabIndex={0} aria-label="Measurement 数据表格"><table>
         <thead><tr><th rowSpan={2} className="pinned">时间<small>精确时间</small></th>{tags.length > 0 && <th colSpan={tags.length}>Tags</th>}{fields.length > 0 && <th colSpan={fields.length}>Fields</th>}</tr><tr>{tags.map(tag => <th key={'tag-' + tag}>{tag}</th>)}{fields.map(field => <th key={'field-' + field.name}>{field.name}<small>{field.type}</small></th>)}</tr></thead>
-        <tbody>{points.map(point => <tr key={point.id}><td className="pinned measurement-time" title={timeTitle(point.time)}>{point.time}</td>{tags.map(tag => <td key={'tag-' + tag}>{point.tags[tag] ?? ''}</td>)}{fields.map(field => <td key={'field-' + field.name} className={point.fields[field.name] == null ? 'measurement-missing-field' : ''}>{point.fields[field.name] ?? ''}</td>)}</tr>)}</tbody>
+        <tbody>{points.map(point => <tr key={point.id}><td className="pinned measurement-time" title={timeTitle(point.time)}>{point.time}</td>{tags.map(tag => <td key={'tag-' + tag}>{point.tags[tag] ?? ''}</td>)}{fields.map(field => <EditableFieldCell key={'field-' + field.name} value={point.fields[field.name] ?? null} field={field} editable={editable} draft={drafts[`${point.id}\u0000${field.name}`]} onChange={value => updateDraft(point, field, value)}/>)}</tr>)}</tbody>
       </table>{!loading && points.length === 0 && <div className="measurement-data-empty">当前时段没有数据。</div>}</div>}
     </div>
-    <footer className="measurement-data-pagination"><span>{loading ? '正在更新…' : '偏移 ' + pageOffset + ' · ' + points.length + ' 行'}</span><div><button type="button" disabled={loading || pageOffset === 0} onClick={() => movePage(-1)}>上一页</button><button type="button" disabled={loading || !hasMore} onClick={() => movePage(1)}>下一页</button></div></footer>
+    <footer className="measurement-data-pagination"><span>{loading ? '正在更新…' : '偏移 ' + pageOffset + ' · ' + points.length + ' 行'}</span><div><button type="button" disabled={loading || hasDrafts || pageOffset === 0} onClick={() => movePage(-1)}>上一页</button><button type="button" disabled={loading || hasDrafts || !hasMore} onClick={() => movePage(1)}>下一页</button></div></footer>
   </section>
 }

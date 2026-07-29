@@ -1,6 +1,7 @@
-import type { ClaudeDiagnosis, ClaudeSettings, CommandBatchResponse, CommandBatchValidation, MeasurementSchema, QueryResponse } from './types'
+import type { ClaudeDiagnosis, ClaudeSettings, CommandBatchResponse, CommandBatchValidation, MeasurementSchema, MeasurementUpdateResult, QueryResponse } from './types'
 import type { BulkJobStatus, BulkPlanRequest, BulkPreview } from './bulk-data.ts'
 import type { MeasurementDataOptions, MeasurementDataPage } from './measurement-data.ts'
+import type { MeasurementPointUpdate } from './measurement-editing.ts'
 import { isTauri } from '@tauri-apps/api/core'
 
 let sessionId = ''
@@ -33,6 +34,7 @@ export const bridge = {
     const bounds = options.startNs === null ? '' : `&startNs=${encodeURIComponent(options.startNs)}&endNs=${encodeURIComponent(options.endNs!)}`
     return request<MeasurementDataPage>(`/measurement-data?database=${encodeURIComponent(database)}&measurement=${encodeURIComponent(measurement)}&limit=${encodeURIComponent(String(options.limit))}&offset=${encodeURIComponent(String(options.offset))}${bounds}`, { signal })
   },
+  updateMeasurementData: (payload: { database: string; measurement: string; updates: MeasurementPointUpdate[] }, signal?: AbortSignal) => request<MeasurementUpdateResult>('/measurement-data/updates', { method: 'POST', body: JSON.stringify(payload), signal }),
   retentionPolicies: (database: string) => request<{ name:string; durationMs:number; isDefault:boolean }[]>(`/retention-policies?database=${encodeURIComponent(database)}`),
   tagValues: (database: string, measurement: string, tag: string) => request<{ values:string[]; truncated:boolean }>(`/tag-values?database=${encodeURIComponent(database)}&measurement=${encodeURIComponent(measurement)}&tag=${encodeURIComponent(tag)}`),
   previewBulkJob: (plan: BulkPlanRequest, signal?: AbortSignal) => request<BulkPreview>('/bulk-jobs/preview', { method:'POST', body:JSON.stringify(plan), signal }),
