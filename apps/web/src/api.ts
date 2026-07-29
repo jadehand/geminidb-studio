@@ -3,6 +3,7 @@ import type { BulkJobStatus, BulkPlanRequest, BulkPreview } from './bulk-data.ts
 import { isTauri } from '@tauri-apps/api/core'
 
 let sessionId = ''
+let loginRequest = 0
 const apiBase = isTauri() && import.meta.env?.PROD ? 'http://127.0.0.1:8790' : '/api'
 
 export class BridgeError extends Error { code:string;status:number;details:unknown;constructor(message:string,code:string,status:number,details?:unknown){super(message);this.code=code;this.status=status;this.details=details} }
@@ -18,7 +19,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const bridge = {
   login: async (connection: { mode: 'mock' | 'influx'; endpoint: string; username: string; password: string; insecureSkipVerify: boolean; readOnly: boolean; environment?: 'prod'|'test'|'dev' }) => {
+    const requestId = ++loginRequest
     const result = await request<{ sessionId: string }>('/login', { method: 'POST', body: JSON.stringify({ ...connection, environment: connection.environment ?? 'dev' }) })
+    if (requestId !== loginRequest) throw new BridgeError('连接已被新的连接请求替代','LOGIN_SUPERSEDED',409)
     sessionId = result.sessionId
     return result
   },

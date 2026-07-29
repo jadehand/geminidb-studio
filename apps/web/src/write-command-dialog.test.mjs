@@ -12,4 +12,7 @@ test('write command dialog shows database, server-validated count, and actions',
   assert.match(source, /执行写入/)
   assert.match(source, /onCancel/)
   assert.match(source, /onConfirm/)
+  assert.match(source, /executing/)
+  assert.match(source, /disabled=\{executing\}/)
+  assert.match(source, /正在执行/)
 })
