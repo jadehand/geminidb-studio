@@ -79,8 +79,10 @@ export function parseMeasurementDataOptions(searchParams) {
   return { database, measurement, limit, offset, startNs, endNs }
 }
 
-function seriesIdentity(item) {
-  return `${item.name || ''}\u0000${JSON.stringify(Object.entries(item.tags || {}).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0))}`
+function canonicalIdentity(values) {
+  return JSON.stringify(Object.entries(values)
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .map(([key, value]) => [key, value === null ? 'null' : typeof value, value]))
 }
 
 export function flattenMeasurementSeries({ measurement, schema, series, limit, offset = 0 }) {
@@ -98,26 +100,31 @@ export function flattenMeasurementSeries({ measurement, schema, series, limit, o
       const tags = Object.fromEntries(Object.entries(item.tags || {}).map(([key, value]) => [key, String(value)]))
       for (const tag of schema.tags || []) if (!Object.hasOwn(tags, tag) && row[tag] !== undefined && row[tag] !== null) tags[tag] = String(row[tag])
       const fields = Object.fromEntries((schema.fields || []).map(field => [field.name, row[field.name] ?? null]))
+      const sortTags = canonicalIdentity(tags)
+      const sortFields = canonicalIdentity(fields)
       points.push({
-        id:`${name}:${seriesIndex}:${valueIndex}`,
+        id:`${name}\u0000${timestampNs}\u0000${sortTags}\u0000${sortFields}`,
         measurement:name,
         timestampNs,
         time:timestampNs,
         tags,
         fields,
         sortTimestamp:nanoseconds(timestampNs, 'time'),
-        sortSeries:seriesIdentity(item),
-        sortRow:valueIndex,
+        sortMeasurement:name,
+        sortTags,
+        sortFields,
       })
     }
   }
   points.sort((left, right) => {
     if (left.sortTimestamp !== right.sortTimestamp) return left.sortTimestamp > right.sortTimestamp ? -1 : 1
-    if (left.sortSeries !== right.sortSeries) return left.sortSeries < right.sortSeries ? -1 : 1
-    return left.sortRow - right.sortRow
+    if (left.sortMeasurement !== right.sortMeasurement) return left.sortMeasurement < right.sortMeasurement ? -1 : 1
+    if (left.sortTags !== right.sortTags) return left.sortTags < right.sortTags ? -1 : 1
+    if (left.sortFields !== right.sortFields) return left.sortFields < right.sortFields ? -1 : 1
+    return 0
   })
   return {
-    points:points.slice(pageStart, pageEnd).map(({ sortTimestamp, sortSeries, sortRow, ...point }) => point),
+    points:points.slice(pageStart, pageEnd).map(({ sortTimestamp, sortMeasurement, sortTags, sortFields, ...point }) => point),
     hasMore:points.length > pageEnd,
   }
 }

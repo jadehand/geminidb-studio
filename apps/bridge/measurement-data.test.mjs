@@ -66,16 +66,16 @@ test('flattens series into complete tag and field point records without losing n
     limit:2,
   })
 
-  assert.deepEqual(result, {
+  assert.deepEqual({ ...result, points:result.points.map(({ id, ...point }) => point) }, {
     points:[
       {
-        id:'cpu_1784995200:0:0', measurement:'cpu_1784995200',
+        measurement:'cpu_1784995200',
         timestampNs:'1784998800000000001', time:'1784998800000000001',
         tags:{ host:'node-01', region:'cn-north' },
         fields:{ value:37.82, status:'ok', count:null },
       },
       {
-        id:'cpu_1784995200:0:1', measurement:'cpu_1784995200',
+        measurement:'cpu_1784995200',
         timestampNs:'1784998800000000000', time:'1784998800000000000',
         tags:{ host:'node-01', region:'cn-north' },
         fields:{ value:38.1, status:null, count:null },
@@ -83,6 +83,24 @@ test('flattens series into complete tag and field point records without losing n
     ],
     hasMore:true,
   })
+})
+
+test('stabilizes equal timestamps from row tag columns regardless of series order', () => {
+  const input = {
+    measurement:'cpu', limit:2, offset:0,
+    schema:{ tags:['host'], fields:[{ name:'value', type:'float' }] },
+    series:[
+      { name:'cpu', tags:{}, columns:['time', 'host', 'value'], values:[['1784998800000000001', 'z', 1]] },
+      { name:'cpu', tags:{}, columns:['time', 'host', 'value'], values:[['1784998800000000001', 'a', 2]] },
+      { name:'cpu', tags:{}, columns:['time', 'host', 'value'], values:[['1784998800000000001', 'same', 9]] },
+      { name:'cpu', tags:{}, columns:['time', 'host', 'value'], values:[['1784998800000000001', 'same', 3]] },
+    ],
+  }
+  const forward = flattenMeasurementSeries(input)
+  const reverse = flattenMeasurementSeries({ ...input, series:[...input.series].reverse() })
+  assert.deepEqual(forward.points.map(point => point.tags.host), ['a', 'same'])
+  assert.deepEqual(forward.points, reverse.points)
+  assert.deepEqual(forward.points.map(point => point.id), reverse.points.map(point => point.id))
 })
 
 test('globally pages interleaved series without losing points', () => {
