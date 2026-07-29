@@ -26,6 +26,14 @@ function randomWords(...words) {
   return () => values.shift()
 }
 
+function assertError(fn, code, message) {
+  assert.throws(fn, error => {
+    assert.equal(error.code, code)
+    assert.equal(error.message, `${code}: ${message}`)
+    return true
+  })
+}
+
 test('same seed creates byte-for-byte identical Line Protocol', () => {
   const plan = {
     targets: [{ date: '2026-07-26', measurement: 'cpu_1784995200', timestamps: [1784995200000] }],
@@ -53,6 +61,23 @@ test('encodes Influx Line Protocol escaping and preserves field types', () => {
     }),
     'cpu\\ load,host=node\\,\\ 01 count=2i,ok=true,note="a\\"b" 1784995200000',
   )
+})
+
+test('keeps legacy validation errors at the bulk encoder boundary', () => {
+  assertError(() => encodeLineProtocol(null), 'GENERATOR_INVALID', 'point is required')
+  assertError(() => encodeLineProtocol(42), 'GENERATOR_INVALID', 'point is required')
+  assertError(() => encodeLineProtocol({
+    measurement: 'cpu',
+    tags: {},
+    fields: { value: null },
+    timestampMs: 1,
+  }), 'GENERATOR_INVALID', 'field value is invalid')
+  assertError(() => encodeLineProtocol({
+    measurement: 'cpu',
+    tags: {},
+    fields: { value: { type: 'integer', value: 1 } },
+    timestampMs: Number.MAX_SAFE_INTEGER + 1,
+  }), 'GENERATOR_INVALID', 'timestamp must be a safe integer')
 })
 
 test('generates supported field kinds in stable field and tag order', () => {

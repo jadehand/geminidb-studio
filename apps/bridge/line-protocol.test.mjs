@@ -2,6 +2,14 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { encodeLineProtocolPoint } from './line-protocol.mjs'
 
+function assertError(fn, message) {
+  assert.throws(fn, error => {
+    assert.equal(error.code, 'LINE_PROTOCOL_INVALID')
+    assert.equal(error.message, `LINE_PROTOCOL_INVALID: ${message}`)
+    return true
+  })
+}
+
 test('preserves exact nanosecond timestamp strings', () => {
   assert.equal(
     encodeLineProtocolPoint({
@@ -77,4 +85,29 @@ test('rejects unsafe millisecond timestamps and invalid nanosecond strings', () 
   for (const timestamp of ['', '1784995200123456789.0', '1784995200123456789n', 1784995200123456789]) {
     assert.throws(() => encodeLineProtocolPoint({ ...point, timestamp, precision: 'ns' }), /decimal string/)
   }
+})
+
+test('rejects invalid typed field values and precision with line protocol errors', () => {
+  const point = {
+    measurement: 'cpu',
+    tags: {},
+    fields: { value: { type: 'float', value: 1 } },
+    timestamp: 1,
+    precision: 'ms',
+  }
+  for (const value of [NaN, Infinity, -Infinity]) {
+    assertError(
+      () => encodeLineProtocolPoint({ ...point, fields: { value: { type: 'float', value } } }),
+      'field value must be finite',
+    )
+  }
+  assertError(
+    () => encodeLineProtocolPoint({ ...point, fields: { value: { type: 'string', value: true } } }),
+    'field value must be a string',
+  )
+  assertError(
+    () => encodeLineProtocolPoint({ ...point, fields: { value: { type: 'boolean', value: 'true' } } }),
+    'field value must be a boolean',
+  )
+  assertError(() => encodeLineProtocolPoint({ ...point, precision: 'us' }), 'precision must be ms or ns')
 })

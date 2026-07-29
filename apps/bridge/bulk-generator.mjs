@@ -437,13 +437,21 @@ export function compileConstraints(fields, constraints = []) {
 }
 
 export function encodeLineProtocol(point) {
-  return encodeLineProtocolPoint({
-    measurement: point?.measurement,
-    tags: point?.tags,
-    fields: point?.fields,
-    timestamp: point?.timestampMs,
-    precision: 'ms',
-  })
+  if (!point || typeof point !== 'object') throw generatorError('point is required')
+  try {
+    return encodeLineProtocolPoint({
+      measurement: point.measurement,
+      tags: point.tags,
+      fields: point.fields,
+      timestamp: point.timestampMs,
+      precision: 'ms',
+    })
+  } catch (error) {
+    if (error?.code === 'LINE_PROTOCOL_INVALID') {
+      throw generatorError(error.message.replace(/^LINE_PROTOCOL_INVALID: /, ''))
+    }
+    throw error
+  }
 }
 
 function* cartesianTags(tags, index = 0, current = {}) {
