@@ -69,6 +69,10 @@ function parseJson(text) {
   try { return JSON.parse(text) } catch { throw new Error('GeminiDB Influx 返回了无法解析的 JSON') }
 }
 
+function resultError(payload) {
+  return payload.results?.find(result => result.error)?.error
+}
+
 function queryPath(database, sql) {
   const params = new URLSearchParams({ q:sql, epoch:'ms' })
   if (database) params.set('db', database)
@@ -96,11 +100,20 @@ export async function influxQuery(config, database, sql) {
   const started = performance.now()
   const response = await request(config, 'GET', queryPath(database, sql))
   const payload = parseJson(response.text)
-  const error = payload.results?.find(result => result.error)?.error
+  const error = resultError(payload)
   if (error) throw new Error(error)
   const series = payload.results?.flatMap(result => result.series || []) || []
   const rows = series.flatMap(item => (item.values || []).map(values => Object.fromEntries(item.columns.map((column, index) => [column, values[index]]))))
   return { rows, series, durationMs:Math.round(performance.now() - started) }
+}
+
+export async function influxCommand(config, database, command) {
+  const started = performance.now()
+  const response = await request(config, 'GET', queryPath(database, command))
+  const payload = parseJson(response.text)
+  const error = resultError(payload)
+  if (error) throw new Error(error)
+  return { affectedRows:1, durationMs:Math.round(performance.now() - started), message:'INSERT 执行成功' }
 }
 
 export async function listDatabases(config) {
