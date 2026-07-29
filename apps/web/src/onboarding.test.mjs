@@ -3,9 +3,17 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const model=readFileSync(new URL('./onboarding.ts',import.meta.url),'utf8')
+const TOUR_STEPS=[...model.matchAll(/\{\s*target: '([^']+)',\s*title: '([^']+)',\s*description: '([^']+)'/g)].map(([,target,title,description])=>({target,title,description}))
 const app=readFileSync(new URL('./App.tsx',import.meta.url),'utf8')
 const editor=readFileSync(new URL('./QueryEditor.tsx',import.meta.url),'utf8')
 const component=readFileSync(new URL('./FeatureTour.tsx',import.meta.url),'utf8')
+
+test('bulk generation is the final onboarding step',()=>{
+  const finalStep=TOUR_STEPS.at(-1)
+  assert.equal(finalStep.target,'bulk-data')
+  assert.match(finalStep.title,/批量造数/)
+  assert.match(finalStep.description,/预览/)
+})
 
 test('首次导览覆盖核心查询流程和实用技巧',()=>{
   for(const target of ['new-connection','database-switcher','catalog','query-editor','schema-summary','execute-query','query-results','result-actions','time-converter']){

@@ -53,6 +53,11 @@ export const TOUR_STEPS: TourStep[] = [
     target: 'time-converter',
     title: '转换时间戳',
     description: '随时转换 UTC、北京时间和 Unix 时间戳，写时间范围时更方便。'
+  },
+  {
+    target: 'bulk-data',
+    title: '批量造数：生成测试数据',
+    description: '选择目标和生成规则，先预览计划，再确认执行批量造数。'
   }
 ]
 
