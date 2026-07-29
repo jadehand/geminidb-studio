@@ -1,3 +1,5 @@
+import { encodeLineProtocolPoint } from './line-protocol.mjs'
+
 function createError(message, code) {
   const error = new Error(`${code}: ${message}`)
   error.code = code
@@ -434,40 +436,14 @@ export function compileConstraints(fields, constraints = []) {
   }
 }
 
-function rejectLineBreaks(value, label) {
-  const stringValue = String(value)
-  if (/[\r\n]/.test(stringValue)) throw generatorError(`${label} cannot contain CR/LF`)
-  return stringValue
-}
-
-function escapeIdentifier(value, label) {
-  return rejectLineBreaks(value, label).replace(/([ ,=])/g, '\\$1')
-}
-
-function escapeString(value, label) {
-  return rejectLineBreaks(value, label).replace(/([\\"])/g, '\\$1')
-}
-
-function normalizeObjectEntries(value, label) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw generatorError(`${label} must be an object`)
-  return Object.entries(value)
-}
-
 export function encodeLineProtocol(point) {
-  if (!point || typeof point !== 'object') throw generatorError('point is required')
-  if (typeof point.measurement !== 'string' || !point.measurement) throw generatorError('measurement is required')
-  requireSafeInteger(point.timestampMs, 'timestamp')
-  const tags = normalizeObjectEntries(point.tags ?? {}, 'tags').map(([key, value]) => `${escapeIdentifier(key, 'tag key')}=${escapeIdentifier(value, 'tag value')}`)
-  const fields = normalizeObjectEntries(point.fields, 'fields').map(([key, field]) => {
-    if (!field || typeof field !== 'object') throw generatorError(`field ${key} is invalid`)
-    const value = assertFieldValue(field.type, field.value, `field ${key}`)
-    if (field.type === 'integer') return `${escapeIdentifier(key, 'field key')}=${value}i`
-    if (field.type === 'boolean') return `${escapeIdentifier(key, 'field key')}=${value}`
-    if (field.type === 'string') return `${escapeIdentifier(key, 'field key')}="${escapeString(value, 'string field value')}"`
-    return `${escapeIdentifier(key, 'field key')}=${value}`
+  return encodeLineProtocolPoint({
+    measurement: point?.measurement,
+    tags: point?.tags,
+    fields: point?.fields,
+    timestamp: point?.timestampMs,
+    precision: 'ms',
   })
-  if (fields.length === 0) throw generatorError('point requires at least one field')
-  return `${escapeIdentifier(point.measurement, 'measurement')}${tags.length ? `,${tags.join(',')}` : ''} ${fields.join(',')} ${point.timestampMs}`
 }
 
 function* cartesianTags(tags, index = 0, current = {}) {
