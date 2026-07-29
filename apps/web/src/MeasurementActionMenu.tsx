@@ -24,7 +24,7 @@ export default function MeasurementActionMenu({ anchor, measurement, onViewData,
 
   useEffect(() => {
     const closeOutside = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) onClose(true)
+      if (!menuRef.current?.contains(event.target as Node)) onClose(false)
     }
     document.addEventListener('pointerdown', closeOutside)
     itemRefs.current[0]?.focus()
