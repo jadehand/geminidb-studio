@@ -27,6 +27,7 @@ export type MeasurementPointUpdate = {
 const FIELD_TYPES = new Set<MeasurementFieldType>(['integer', 'float', 'string', 'boolean'])
 const DECIMAL_TIMESTAMP = /^-?\d+$/
 const INTEGER_INPUT = /^[+-]?\d+$/
+const FLOAT_INPUT = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/
 
 function draftKey(pointId: string, fieldName: string) {
   return `${pointId}\u0000${fieldName}`
@@ -55,7 +56,7 @@ function isPoint(point: MeasurementPoint): boolean {
 }
 
 function sameValue(left: MeasurementFieldValue | null, right: MeasurementFieldValue | null) {
-  return Object.is(left, right)
+  return left === right
 }
 
 function completeTags(point: MeasurementPoint, schema: MeasurementSchema): Record<string, string> | null {
@@ -85,6 +86,7 @@ export function parseFieldInput(type: string, input: unknown): ParsedFieldInput 
     const value = Number(input)
     return Number.isSafeInteger(value) ? { ok: true, value } : failed('integer fields must be safe integers')
   }
+  if (!FLOAT_INPUT.test(input)) return failed('float fields must be finite numbers')
   const value = Number(input)
   return Number.isFinite(value) ? { ok: true, value } : failed('float fields must be finite numbers')
 }

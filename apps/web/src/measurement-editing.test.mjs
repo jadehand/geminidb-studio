@@ -39,6 +39,16 @@ test('rejects unsafe integers, non-finite floats, and implicit boolean coercion'
   assert.equal(parseFieldInput('boolean', '1').ok, false)
 })
 
+test('accepts decimal float grammar including scientific notation only', () => {
+  assert.deepEqual(parseFieldInput('float', '.5'), { ok: true, value: 0.5 })
+  assert.deepEqual(parseFieldInput('float', '2.'), { ok: true, value: 2 })
+  assert.deepEqual(parseFieldInput('float', '-1.25e+3'), { ok: true, value: -1250 })
+
+  for (const input of ['0x10', '0b10', '0o10', 'NaN', 'Infinity', '-Infinity', ' 2', '2 ', '\t2']) {
+    assert.equal(parseFieldInput('float', input).ok, false, input)
+  }
+})
+
 test('groups changed fields for one point without mutating loaded data or schema', () => {
   const originalPoint = structuredClone(point)
   const originalSchema = structuredClone(schema)
@@ -70,6 +80,14 @@ test('removes an existing field draft only when its exact original value is rest
   draft = setDraftValue({}, point, schema.fields[3], 'revised')
   draft = setDraftValue(draft, point, schema.fields[3], '')
   assert.deepEqual(draft, {})
+})
+
+test('treats signed zero as equal while preserving boolean and string distinctions', () => {
+  assert.deepEqual(setDraftValue({}, point, schema.fields[0], -0), {})
+  const negativeZeroPoint = { ...point, fields: { ...point.fields, count: -0 } }
+  assert.deepEqual(setDraftValue({}, negativeZeroPoint, schema.fields[0], 0), {})
+  assert.equal(Object.keys(setDraftValue({}, point, schema.fields[2], true)).length, 1)
+  assert.equal(Object.keys(setDraftValue({}, point, schema.fields[3], '0')).length, 1)
 })
 
 test('includes a non-null addition for a missing field and never uses null as a delete marker', () => {
