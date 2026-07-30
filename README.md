@@ -83,7 +83,14 @@ Bridge 在登录时执行 `SHOW DATABASES` 验证连接，随后使用：
 WRITE cpu,host=node-01 usage=37.82 1784649600000000000
 ```
 
-GeminiDB Influx 不支持传统 SQL `INSERT INTO ... VALUES ...`。Bridge 会返回迁移提示，不会把这类语句发送到云端。
+支持 InfluxQL 兼容的 `INSERT` 和 `INSERT INTO`：
+
+```sql
+INSERT cpu,host=node-01 usage=37.82 1784649600000000000
+INSERT INTO rp cpu,host=node-01 usage=37.82 1784649600000000000
+```
+
+多条写入语句可以一次粘贴执行，遇错即停并准确展示成功、失败和未执行数量，不自动回滚。生产环境连接的所有写入入口被前端和 Bridge 双重阻止。
 
 ## 批量造数（0.5.0）
 
@@ -114,19 +121,62 @@ Bridge 新增以下接口：
 - `POST /bulk-jobs/:id/resume`：从失败批次继续。
 - `POST /bulk-jobs/:id/cancel`：取消后续写入。
 
+## Measurement 数据视图与在线编辑（0.6.0）
+
+在数据目录中单击或右键具体天表 Measurement，可选择"查看数据"打开独立的数据页签。数据页签与查询页签在工作区共存：
+
+- 默认展示全天最新 50 个数据点，按 `time DESC` 排序。
+- 支持全天或自定义时段过滤，自定义时段限定在天表对应日期内。
+- 分页支持 50/100/200/500 每页，使用服务端分页。
+- 列按 Time → Tags → Fields 分组展示，缺失 Field 显示为空白单元格而非 `NULL`。
+- 纳秒时间戳以字符串保存，避免 JavaScript 大整数精度丢失。
+- 时间列支持三种显示模式：纳秒时间戳 / UTC / 北京时间，偏好持久化到本地。
+- 支持按时间、Tag 值、Field 名和值搜索筛选当前页。
+
+测试和开发环境下可在线编辑 Field 值：
+
+- 双击 Field 单元格进入编辑；Enter 接受，Escape 取消。
+- 按 Schema 类型校验 integer、float、string、boolean。
+- 同一数据点修改多个 Field 自动合并为一次写入。
+- 提交按钮显示待提交数量（`↑ 提交 N 项修改`），点击即执行，不增加确认弹窗。
+- 任意数据点写入失败后立即停止，已成功项标记提交并重新读取，失败和未执行项保留待提交状态。
+- 刷新、翻页、切换时间范围、修改每页数量、关闭页签、切换连接或 Database 前，存在未提交修改时弹出保护弹窗（提交/放弃/取消）。
+
+生产环境数据页签完全只读，Field 单元格不可编辑。
+
+Bridge 新增接口：
+
+- `GET /measurement-data`：分页读取 Measurement 原始数据点，保留完整点身份、Tag 集合和 Field 类型。
+- `POST /measurement-data/updates`：提交 Field 更新，按点身份写入，遇错即停。
+- `POST /commands`：执行 INSERT / INSERT INTO / WRITE 批量命令。
+
+## UX 改进（0.6.0）
+
+- 删除连接使用应用内确认弹窗（展示连接名称和地址），不再使用浏览器原生 `confirm`。
+- 查询结果默认字号从 10px 调整为 12px，使用清晰等宽字体。
+- `Ctrl + 滚轮` 缩放结果表格（80%–160%，10% 步进），工具栏提供 `− 100% +` 控件，缩放比例持久化。
+- 新手引导最后一步介绍批量造数入口。
+- 新增知识库面板：内置 60+ 条 GeminiDB Influx 参考条目（查询语法、Schema 探索、聚合分析、时间处理、数据管理等 12 个分类），可通过侧栏第三个工具按钮打开。
+
 ## 当前能力
 
 - 常用连接与自动登录
 - database 切换与天表目录
-- database、measurements 和 measurement 前缀三级目录均可展开/收起
+- database、measurements 和 measurement 前缀三级目录均可展开/收起；具体 Measurement 节点支持左键/右键操作菜单（查看数据、新建查询、查看 Schema）
 - Monaco InfluxQL 编辑器：语法高亮、关键字/函数/measurement 补全和常见 MySQL 语法提醒
 - 选择 measurement 后自动读取 Field Key、字段类型和 Tag Key，并加入编辑器补全
-- 测试环境批量造数：多日期、Tag/Field 生成器、约束、预览、后台任务和历史
+- 测试/开发环境批量造数：多日期、Tag/Field 生成器、约束、预览、后台任务和历史
+- Measurement 数据视图：独立页签查看天表原始数据点，测试/开发环境可在线编辑 Field 并提交
+- 统一环境写入策略：生产强制只读，测试和开发可写，覆盖 INSERT、INSERT INTO、WRITE、批量造数和在线编辑
+- 多条 INSERT/INSERT INTO/WRITE 一次粘贴顺序执行，遇错即停
 - 多查询页签与草稿自动保存；双击页签重命名，`Ctrl/Cmd + Enter` 执行选区或全文
 - InfluxQL 查询与 line protocol 写入
 - 结果表、CSV/JSON 导出
 - 历史记录、消息与收藏
 - 北京时间/Unix 时间戳转换
+- 知识库面板：60+ 条 GeminiDB Influx 参考条目，覆盖查询、Schema、写入、聚合、排错等 12 个分类
+- 结果表格缩放：Ctrl+滚轮 80%–160%，工具栏控件，缩放比例持久化
+- 应用内连接删除确认弹窗
 - Claude Code 建议 SQL 模拟接口
 
 ## 安全说明
@@ -137,7 +187,7 @@ Bridge 新增以下接口：
 - 连接元数据保存在浏览器本地，密码只保存在当前浏览器会话的 `sessionStorage`，关闭会话后清除；生产桌面版应改用系统 Keychain。
 - 生产环境建议使用负载均衡地址和有效 SSL 证书。
 - 不建议启用“忽略 TLS 证书校验”。
-- 可将连接标记为只读，前端和 Bridge 都会阻止 `WRITE`。
+- 连接环境决定写入权限：生产环境（prod）强制只读，测试（test）和开发（dev）允许写入。前端和 Bridge 均以此为准，不再依赖旧的手动只读开关。
 - `WRITE` 执行前必须确认目标 database 和完整 line protocol。
 - `SELECT` 必须包含 `time` 范围，避免无界扫描。
 - 前端查询超过 30 秒自动取消，运行中也可以手动取消。
