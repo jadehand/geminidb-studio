@@ -21,6 +21,7 @@ import './schema-dialog.css'
 import './responsive-layout.css'
 import './theme.css'
 import './bulk-data.css'
+import './agent-workbench.css'
 import './measurement-data-view.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

@@ -1,6 +1,6 @@
-# GeminiDB Studio MVP
+# GeminiDB Studio v0.7.0
 
-本地 GeminiDB 可视化查询工作台，通过 Bridge 连接真实 GeminiDB Influx（InfluxDB 1.x HTTP API）实例。
+本地 GeminiDB Influx 可视化工作台，通过 Bridge 连接真实 GeminiDB Influx（InfluxDB 1.x HTTP API）实例。v0.7.0 在 v0.6 数据查看、编辑和离线知识库能力上新增独立 Agent 工作台，可在 Studio 的权限与预算边界内完成对话、查询、分析、受控写入和批量造数。
 
 ## 启动
 
@@ -56,6 +56,7 @@ MSI 适合企业管理和批量部署；NSIS 产物是普通用户双击安装�
 ```bash
 npm run check
 npm run build
+npm run test:web
 npm run test:bridge
 npm run desktop:info
 curl http://127.0.0.1:8790/health
@@ -83,14 +84,7 @@ Bridge 在登录时执行 `SHOW DATABASES` 验证连接，随后使用：
 WRITE cpu,host=node-01 usage=37.82 1784649600000000000
 ```
 
-支持 InfluxQL 兼容的 `INSERT` 和 `INSERT INTO`：
-
-```sql
-INSERT cpu,host=node-01 usage=37.82 1784649600000000000
-INSERT INTO rp cpu,host=node-01 usage=37.82 1784649600000000000
-```
-
-多条写入语句可以一次粘贴执行，遇错即停并准确展示成功、失败和未执行数量，不自动回滚。生产环境连接的所有写入入口被前端和 Bridge 双重阻止。
+GeminiDB Influx 不支持传统 SQL `INSERT INTO ... VALUES ...`。Bridge 会返回迁移提示，不会把这类语句发送到云端。
 
 ## 批量造数（0.5.0）
 
@@ -121,63 +115,54 @@ Bridge 新增以下接口：
 - `POST /bulk-jobs/:id/resume`：从失败批次继续。
 - `POST /bulk-jobs/:id/cancel`：取消后续写入。
 
-## Measurement 数据视图与在线编辑（0.6.0）
+## Agent 工作台
 
-在数据目录中单击或右键具体天表 Measurement，可选择"查看数据"打开独立的数据页签。数据页签与查询页签在工作区共存：
+Agent 工作台作为“查询与数据”旁的一级工作区运行，兼容现有查询页签、Measurement 数据页签、离线知识库和批量造数。切换工作区不会丢失未提交的 Measurement 草稿。
 
-- 默认展示全天最新 50 个数据点，按 `time DESC` 排序。
-- 支持全天或自定义时段过滤，自定义时段限定在天表对应日期内。
-- 分页支持 50/100/200/500 每页，使用服务端分页。
-- 列按 Time → Tags → Fields 分组展示，缺失 Field 显示为空白单元格而非 `NULL`。
-- 纳秒时间戳以字符串保存，避免 JavaScript 大整数精度丢失。
-- 时间列支持三种显示模式：纳秒时间戳 / UTC / 北京时间，偏好持久化到本地。
-- 支持按时间、Tag 值、Field 名和值搜索筛选当前页。
+- 默认调用本机 Claude CLI；新 Run 中 CLI 不可用时，可回退到 Bridge 环境配置的 Anthropic API。
+- 可选择当前连接、Database 和 Retention Policy，读取 Schema、生成或验证 InfluxQL，并分析最多 1,000 行查询结果。
+- 开发和测试环境支持受控查询与 Line Protocol 写入；批量造数继续只允许测试环境，生产、未知环境和只读上下文禁止数据库工具。
+- 单次 Run 最多调用 12 次工具、运行 5 分钟；“停止任务”会阻止后续调用，但不回滚已经完成的写入。
+- 查询窗口可把 SQL、错误和 Schema 发送到 Agent；Agent 返回的 SQL 只会打开新查询页签，不会自动执行。
+- 会话、消息和工具轨迹保存在本机应用数据目录。数据库密码、API Key 和连接凭据不会写入 Agent 历史。
 
-测试和开发环境下可在线编辑 Field 值：
+### Claude 配置
 
-- 双击 Field 单元格进入编辑；Enter 接受，Escape 取消。
-- 按 Schema 类型校验 integer、float、string、boolean。
-- 同一数据点修改多个 Field 自动合并为一次写入。
-- 提交按钮显示待提交数量（`↑ 提交 N 项修改`），点击即执行，不增加确认弹窗。
-- 任意数据点写入失败后立即停止，已成功项标记提交并重新读取，失败和未执行项保留待提交状态。
-- 刷新、翻页、切换时间范围、修改每页数量、关闭页签、切换连接或 Database 前，存在未提交修改时弹出保护弹窗（提交/放弃/取消）。
+CLI 模式要求本机已安装并登录 Claude Code，默认执行命令为 `claude`：
 
-生产环境数据页签完全只读，Field 单元格不可编辑。
+```bash
+claude --version
+claude auth status
+```
 
-Bridge 新增接口：
+如需启用 API 备用通道，在启动 Bridge 前通过本机环境变量提供 Key：
 
-- `GET /measurement-data`：分页读取 Measurement 原始数据点，保留完整点身份、Tag 集合和 Field 类型。
-- `POST /measurement-data/updates`：提交 Field 更新，按点身份写入，遇错即停。
-- `POST /commands`：执行 INSERT / INSERT INTO / WRITE 批量命令。
+```bash
+export ANTHROPIC_API_KEY="<your-key>"
+npm run dev:bridge
+```
 
-## UX 改进（0.6.0）
+默认 Endpoint 为 `https://api.anthropic.com`。API Key 只由本机 Bridge 进程读取，不写入 Agent 会话、工具轨迹或 Git；不要把真实 Key 写入源码、README 或制品包。API 模式会把消息、Schema 和最多 1,000 行查询结果发送到配置的 Endpoint。
 
-- 删除连接使用应用内确认弹窗（展示连接名称和地址），不再使用浏览器原生 `confirm`。
-- 查询结果默认字号从 10px 调整为 12px，使用清晰等宽字体。
-- `Ctrl + 滚轮` 缩放结果表格（80%–160%，10% 步进），工具栏提供 `− 100% +` 控件，缩放比例持久化。
-- 新手引导最后一步介绍批量造数入口。
-- 新增知识库面板：内置 60+ 条 GeminiDB Influx 参考条目（查询语法、Schema 探索、聚合分析、时间处理、数据管理等 12 个分类），可通过侧栏第三个工具按钮打开。
+Agent 不直接获得 Shell、文件系统、数据库密码或 HTTP 连接参数。Claude 只能提出结构化工具调用，由 Bridge 根据当前已登录连接执行白名单工具。生产、未知环境和只读连接会按策略拒绝数据库工具；普通离线对话仍可使用。
+
+桌面端会将系统应用数据目录传给 Bridge。直接运行 `npm run dev:bridge` 时，开发历史默认保存在系统临时目录下的 `geminidb-studio-dev`。
 
 ## 当前能力
 
 - 常用连接与自动登录
 - database 切换与天表目录
-- database、measurements 和 measurement 前缀三级目录均可展开/收起；具体 Measurement 节点支持左键/右键操作菜单（查看数据、新建查询、查看 Schema）
+- database、measurements 和 measurement 前缀三级目录均可展开/收起
 - Monaco InfluxQL 编辑器：语法高亮、关键字/函数/measurement 补全和常见 MySQL 语法提醒
 - 选择 measurement 后自动读取 Field Key、字段类型和 Tag Key，并加入编辑器补全
-- 测试/开发环境批量造数：多日期、Tag/Field 生成器、约束、预览、后台任务和历史
-- Measurement 数据视图：独立页签查看天表原始数据点，测试/开发环境可在线编辑 Field 并提交
-- 统一环境写入策略：生产强制只读，测试和开发可写，覆盖 INSERT、INSERT INTO、WRITE、批量造数和在线编辑
-- 多条 INSERT/INSERT INTO/WRITE 一次粘贴顺序执行，遇错即停
+- 测试环境批量造数：多日期、Tag/Field 生成器、约束、预览、后台任务和历史
 - 多查询页签与草稿自动保存；双击页签重命名，`Ctrl/Cmd + Enter` 执行选区或全文
 - InfluxQL 查询与 line protocol 写入
 - 结果表、CSV/JSON 导出
 - 历史记录、消息与收藏
+- 独立 Agent 工作台：本地多会话、Claude CLI/API 回退、受控查询、写入和批量造数
 - 北京时间/Unix 时间戳转换
-- 知识库面板：60+ 条 GeminiDB Influx 参考条目，覆盖查询、Schema、写入、聚合、排错等 12 个分类
-- 结果表格缩放：Ctrl+滚轮 80%–160%，工具栏控件，缩放比例持久化
-- 应用内连接删除确认弹窗
-- Claude Code 建议 SQL 模拟接口
+- 查询诊断：Claude CLI 优先、Anthropic API 备用
 
 ## 安全说明
 
@@ -187,11 +172,13 @@ Bridge 新增接口：
 - 连接元数据保存在浏览器本地，密码只保存在当前浏览器会话的 `sessionStorage`，关闭会话后清除；生产桌面版应改用系统 Keychain。
 - 生产环境建议使用负载均衡地址和有效 SSL 证书。
 - 不建议启用“忽略 TLS 证书校验”。
-- 连接环境决定写入权限：生产环境（prod）强制只读，测试（test）和开发（dev）允许写入。前端和 Bridge 均以此为准，不再依赖旧的手动只读开关。
+- 可将连接标记为只读，前端和 Bridge 都会阻止 `WRITE`。
 - `WRITE` 执行前必须确认目标 database 和完整 line protocol。
 - `SELECT` 必须包含 `time` 范围，避免无界扫描。
 - 前端查询超过 30 秒自动取消，运行中也可以手动取消。
+- Agent 每个 Run 最多运行 5 分钟、调用 12 次工具，同一 Bridge 同时只运行一个 Run。
+- Agent 停止或失败不会回滚已经完成的数据库写入；写入和造数应先在测试环境验证。
 
 ## 生产化入口
 
-Bridge API 保持 `/login`、`/databases`、`/tables`、`/schema`、`/query`、`/ask`，并提供 `/retention-policies`、`/tag-values` 和 `/bulk-jobs/*` 批量造数接口。`/schema` 使用 `SHOW FIELD KEYS` 和 `SHOW TAG KEYS` 读取当前 measurement 结构；真实 Influx HTTP 适配器位于 `apps/bridge/influx-client.mjs`。
+Bridge API 保持 `/login`、`/databases`、`/tables`、`/schema`、`/query`、`/ask`，并提供 `/retention-policies`、`/tag-values`、`/bulk-jobs/*` 和 `/agent/*` 接口。`/schema` 使用 `SHOW FIELD KEYS` 和 `SHOW TAG KEYS` 读取当前 measurement 结构；真实 Influx HTTP 适配器位于 `apps/bridge/influx-client.mjs`。

@@ -51,11 +51,20 @@ fn start_bridge(app: &tauri::AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
+    let data_dir = app.path().app_data_dir()
+        .map_err(|error| format!("无法获取 GeminiDB Studio 数据目录：{error}"))?;
+    std::fs::create_dir_all(&data_dir)
+        .map_err(|error| format!("无法创建 GeminiDB Studio 数据目录：{error}"))?;
+    let parent_pid = std::process::id().to_string();
+    let data_dir = data_dir
+        .to_str()
+        .ok_or_else(|| "GeminiDB Studio 数据目录不是有效的 UTF-8 路径，无法启动 Bridge".to_string())?
+        .to_string();
     let (mut events, child) = app
         .shell()
         .sidecar("geminidb-bridge")
         .map_err(|error| format!("找不到 GeminiDB Bridge：{error}"))?
-        .args(["--parent-pid", &std::process::id().to_string()])
+        .args(["--parent-pid", &parent_pid, "--data-dir", &data_dir])
         .spawn()
         .map_err(|error| format!("无法启动 GeminiDB Bridge：{error}"))?;
 

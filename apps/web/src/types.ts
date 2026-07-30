@@ -16,7 +16,7 @@ export type MeasurementUpdateResult = {
   succeededIds: string[]
   failed: { id: string; index: number; message: string } | null
 }
-export type ClaudeSettings = { provider: 'cli'|'api'; cliPath: string; endpoint: string; model: string; maxTokens: number }
+export type ClaudeSettings = { provider?: 'cli'|'api'; cliPath: string; endpoint: string; model: string; maxTokens: number; fallbackToApi:boolean }
 export type ClaudeDiagnosis = { summary: string; problems: { level: 'error'|'warning'|'info'; message: string }[]; fixedSql: string; performanceAdvice: string[]; risk: 'read'|'write'|'danger'; usage?: { inputTokens?: number; outputTokens?: number } }
 
 export type TagGenerator =
