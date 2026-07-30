@@ -32,12 +32,12 @@ export async function writeExportFile(directory: string, filename: string, conte
 export async function registerDesktopCloseGuard(shouldGuard:() => boolean, onGuardedClose:() => void) {
   if (!isTauri()) return () => {}
   return getCurrentWindow().onCloseRequested(event => {
-    if (!shouldGuard()) return
     event.preventDefault()
-    onGuardedClose()
+    if (shouldGuard()) onGuardedClose()
+    else void destroyDesktopWindow()
   })
 }
 
 export async function destroyDesktopWindow() {
-  if (isTauri()) await getCurrentWindow().destroy()
+  if (isTauri()) await invoke('exit_app')
 }

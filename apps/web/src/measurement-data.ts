@@ -1,4 +1,4 @@
-import { conversionFromMilliseconds } from './time-converter.ts'
+import { conversionFromMilliseconds, formatBeijing } from './time-converter.ts'
 import type { MeasurementDataWorkspaceTab, MeasurementSchema } from './types'
 
 const NANOSECONDS_PER_SECOND = 1_000_000_000n
@@ -58,6 +58,19 @@ export type MeasurementDataResult = {
   page: MeasurementDataPage
 }
 
+export type MeasurementTimeDisplay = 'timestamp' | 'utc' | 'beijing'
+
+export function measurementPointMatchesSearch(point: MeasurementPoint, query: string) {
+  const needle = query.trim().toLocaleLowerCase()
+  if (!needle) return true
+  const values = [
+    point.time,
+    ...Object.entries(point.tags).flat(),
+    ...Object.entries(point.fields).flatMap(([name, value]) => [name, value === null ? '' : String(value)]),
+  ]
+  return values.some(value => value.toLocaleLowerCase().includes(needle))
+}
+
 export function measurementDataRequestKey(
   tab: Pick<MeasurementDataWorkspaceTab, 'connectionId' | 'database' | 'measurement'>,
   readySession: ReadyConnectionSession | null,
@@ -86,6 +99,22 @@ export function measurementNanosecondsToBeijing(value: unknown) {
     return conversionFromMilliseconds(Number(milliseconds))?.beijing ?? null
   } catch {
     return null
+  }
+}
+
+export function formatMeasurementTime(value: unknown, display: MeasurementTimeDisplay) {
+  if (typeof value !== 'string' || !/^\d+$/.test(value)) return String(value ?? '')
+  if (display === 'timestamp') return value
+  try {
+    const nanoseconds = BigInt(value)
+    const seconds = nanoseconds / NANOSECONDS_PER_SECOND
+    const fraction = (nanoseconds % NANOSECONDS_PER_SECOND).toString().padStart(9, '0')
+    const date = new Date(Number(seconds * 1_000n))
+    if (Number.isNaN(date.getTime())) return value
+    if (display === 'utc') return `${date.toISOString().slice(0, 19).replace('T', ' ')}.${fraction} UTC`
+    return `${formatBeijing(date)}.${fraction} UTC+8`
+  } catch {
+    return value
   }
 }
 
@@ -145,8 +174,12 @@ export function normalizeMeasurementDataOptions(input: MeasurementDataOptionsInp
   const offset = input.offset ?? 0
   if (!Number.isSafeInteger(offset) || offset < 0) throw new RangeError('offset must be a non-negative integer')
 
-  const startNs = input.startNs ?? null
-  const endNs = input.endNs ?? null
+  let startNs = input.startNs ?? null
+  let endNs = input.endNs ?? null
+  if (startNs === null && endNs === null && input.day) {
+    startNs = input.day.startNs
+    endNs = input.day.endNs
+  }
   if (startNs === null && endNs === null) return { limit, offset, startNs, endNs }
   if (startNs === null || endNs === null) throw new RangeError('custom ranges require both startNs and endNs')
 

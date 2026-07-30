@@ -9,7 +9,7 @@ export type WorkspaceSnapshot = {
   activeConnection: string
   activeTabId: string
   tabs: WorkspaceTab[]
-  sideTool: 'connections'|'catalog'
+  sideTool: 'connections'|'catalog'|'knowledge'
   sideOpen: boolean
   savedAt: number
 }
@@ -20,7 +20,7 @@ function isRecord(value:unknown):value is Record<string,unknown>{return Boolean(
 function isString(value:unknown):value is string{return typeof value==='string'}
 function isDayRange(value:unknown):value is WorkspaceSnapshot['dayRange']{return value==='all'||value==='today'||value==='yesterday'||value==='7d'}
 function isResultView(value:unknown):value is WorkspaceSnapshot['resultView']{return value==='result'||value==='chart'||value==='history'||value==='messages'||value==='favorites'}
-function isSideTool(value:unknown):value is WorkspaceSnapshot['sideTool']{return value==='connections'||value==='catalog'}
+function isSideTool(value:unknown):value is WorkspaceSnapshot['sideTool']{return value==='connections'||value==='catalog'||value==='knowledge'}
 export function migrateWorkspaceTabs(value:unknown):WorkspaceTab[]{
   if(!Array.isArray(value))return []
   return value.reduce<WorkspaceTab[]>((tabs,tab)=>{

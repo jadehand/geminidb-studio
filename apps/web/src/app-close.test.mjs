@@ -17,11 +17,15 @@ test('运行、重试、暂停和取消中均保护应用关闭', () => {
 test('桌面和 Web 均接入关闭保护', () => {
   const app = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8')
   const desktop = readFileSync(new URL('./desktop.ts', import.meta.url), 'utf8')
+  const rust = readFileSync(new URL('../../../src-tauri/src/lib.rs', import.meta.url), 'utf8')
   assert.match(app, /beforeunload/)
   assert.match(app, /停止任务并退出/)
   assert.match(app, /waitForBulkJobTerminal/)
   assert.match(desktop, /onCloseRequested/)
   assert.match(desktop, /event\.preventDefault\(\)/)
+  assert.match(desktop, /invoke\('exit_app'\)/)
+  assert.match(rust, /fn exit_app/)
+  assert.match(rust, /app\.exit\(0\)/)
 })
 
 test('终态和空状态不阻止关闭', () => {

@@ -9,8 +9,10 @@
 .favorite-dialog-head p{margin:4px 0 0;color:#778392;font-size:10px}
 .favorite-dialog-close{width:28px;height:28px;padding:0;border:0;background:transparent;color:#7d8895;font-size:18px;line-height:1}
 .favorite-dialog-body{padding:16px 21px}
-.favorite-dialog-body label{display:block;margin:0;color:#4f5c6b;font-size:10px;font-weight:620}
-.favorite-dialog-body input{width:100%;height:38px;margin-top:6px;padding:0 10px;border:1px solid #d4dce6;border-radius:7px;background:#fff;color:#273443;font-family:inherit;font-size:11px}
+.favorite-dialog-body label{display:block;margin:0 0 12px;color:#4f5c6b;font-size:10px;font-weight:620}
+.favorite-dialog-body input,.favorite-dialog-body textarea{width:100%;margin-top:6px;padding:0 10px;border:1px solid #d4dce6;border-radius:7px;background:#fff;color:#273443;font-family:inherit;font-size:11px}
+.favorite-dialog-body input{height:38px}
+.favorite-dialog-body textarea{min-height:130px;padding:10px 12px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;line-height:1.6}
 .favorite-sql-preview{margin-top:14px}
 .favorite-sql-preview>span{display:block;margin-bottom:6px;color:#687584;font-size:9px;font-weight:650}
 .favorite-sql-preview pre{max-height:150px;margin:0;overflow:auto;padding:10px 12px;border:1px solid #e2e7ed;border-radius:7px;background:#f7f9fb;color:#344151;font:10px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
@@ -27,7 +29,15 @@
 :root[data-theme="dark"] .favorite-dialog-actions>small{color:#98a5b5}
 :root[data-theme="dark"] .favorite-dialog-close{color:#9aa7b7;background:transparent}
 :root[data-theme="dark"] .favorite-dialog-body label{color:#b6c1ce}
-:root[data-theme="dark"] .favorite-dialog-body input{color:#d9e1ea;background:#222b36;border-color:#465262}
+:root[data-theme="dark"] .favorite-dialog-body input,
+:root[data-theme="dark"] .favorite-dialog-body textarea{color:#d9e1ea;background:#222b36;border-color:#465262}
 :root[data-theme="dark"] .favorite-sql-preview>span{color:#9aa7b7}
 :root[data-theme="dark"] .favorite-sql-preview pre{color:#d9e1ea;background:#171d25;border-color:#3d4856}
 :root[data-theme="dark"] .favorite-dialog-actions kbd{color:#c4cfdb;background:#252f3b;border-color:#465262}
+.favorite>span:first-child{min-width:0}
+.favorite code{overflow:hidden;text-overflow:ellipsis}
+.favorite small{display:block;margin-top:4px;color:#8b95a1;font-size:8px}
+.favorite-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+.favorite-actions button{padding:5px 8px}
+:root[data-theme="dark"] .favorite small{color:#8290a1}
+:root[data-theme="dark"] .favorite-actions button{color:#c8d2de;background:#202a35;border-color:#465262}

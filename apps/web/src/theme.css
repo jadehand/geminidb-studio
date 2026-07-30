@@ -71,7 +71,7 @@
 :root[data-theme="dark"] .context,
 :root[data-theme="dark"] .tree-row em{color:#aab6c5;background:#2a3440}
 :root[data-theme="dark"] .modal{background:#080c11a8}
-:root[data-theme="dark"] .query-tabs{
+:root[data-theme="dark"] .workspace-tabs{
   color:#aeb9c7;
   background:#131920;
   border-color:#394351;

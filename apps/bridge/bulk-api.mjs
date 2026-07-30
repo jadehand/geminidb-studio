@@ -5,6 +5,7 @@ import {
   estimatePlan,
   validateRetentionPolicy,
 } from './bulk-plan.mjs'
+import { isEnvironmentWritable } from './write-policy.mjs'
 
 const PREVIEW_TTL_MS = 15 * 60 * 1_000
 const SAMPLE_LIMIT = 20
@@ -31,8 +32,8 @@ function fingerprint(value) {
 }
 
 function authorizationError(session) {
-  if (session?.environment !== 'test') {
-    return apiError(403, 'BULK_TEST_CONNECTION_REQUIRED', 'Only test connections may generate bulk data')
+  if (!isEnvironmentWritable(session?.environment)) {
+    return apiError(403, 'BULK_WRITABLE_ENV_REQUIRED', 'Only test or development connections may generate bulk data')
   }
   if (session?.readOnly !== false) {
     return apiError(403, 'BULK_WRITE_CONNECTION_REQUIRED', 'A writable connection is required for bulk generation')

@@ -24,3 +24,12 @@ test('measurement leaf actions are offered through an accessible action menu', a
   assert.doesNotMatch(app, /onClick=\{\(\) => void chooseTable\(table\)\}/)
   assert.doesNotMatch(app, /onDoubleClick=\{\(\)=>queryGroup\(prefix,group\)\}/)
 })
+
+test('measurement action menu has coordinated dark theme surfaces', async () => {
+  const css = await readFile(new URL('./sidebar-polish.css', import.meta.url), 'utf8')
+
+  assert.match(css, /:root\[data-theme="dark"\] \.measurement-action-menu \{/)
+  assert.match(css, /background: #202833/)
+  assert.match(css, /border-color: #3d4856/)
+  assert.match(css, /:root\[data-theme="dark"\] \.measurement-action-menu button:hover/)
+})

@@ -31,7 +31,7 @@ function safelyStoredHistory(value: unknown): BulkHistoryItem[] {
 }
 
 export function bulkEntryState(context: BulkEntryContext) {
-  if (context.connection?.environment !== 'test') return { enabled:false, reason:'仅测试环境连接可批量造数' }
+  if (context.connection?.environment !== 'test' && context.connection?.environment !== 'dev') return { enabled:false, reason:'生产环境禁止批量造数' }
   if (context.connection.readOnly !== false) return { enabled:false, reason:'只读连接不可批量造数' }
   if (!context.connected) return { enabled:false, reason:'请先连接到 GeminiDB' }
   if (!context.database?.trim()) return { enabled:false, reason:'请先选择数据库' }
@@ -83,7 +83,7 @@ export function copyHistoryToDraft(item: BulkHistoryItem): BulkDraft {
   return draft
 }
 export function stepForBulkError(code?:string): BulkWizardStep {
-  if (/^(BULK_TEST_CONNECTION_REQUIRED|BULK_WRITE_CONNECTION_REQUIRED|BULK_SESSION_REQUIRED|RP_|SCHEMA_|PREFIX_)/.test(code ?? '')) return 1
+  if (/^(BULK_WRITABLE_ENV_REQUIRED|BULK_TEST_CONNECTION_REQUIRED|BULK_WRITE_CONNECTION_REQUIRED|BULK_SESSION_REQUIRED|RP_|SCHEMA_|PREFIX_)/.test(code ?? '')) return 1
   if (/^(POINT_|SERIES_|DATE_|TIME_|INTERVAL_)/.test(code ?? '')) return 2
   if (/^(CONSTRAINT_|GENERATOR_)/.test(code ?? '')) return 3
   return 4

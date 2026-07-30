@@ -10,9 +10,10 @@ function withStorage(run) {
   try { run(values) } finally { globalThis.localStorage = original }
 }
 
-test('only writable test connections with a live session and database enable bulk entry', () => {
+test('writable test and development connections with a live session and database enable bulk entry', () => {
   assert.equal(bulkEntryState({ connection:{ environment:'test', readOnly:false }, connected:true, database:'db' }).enabled, true)
-  assert.match(bulkEntryState({ connection:{ environment:'prod', readOnly:false }, connected:true, database:'db' }).reason, /测试环境/)
+  assert.equal(bulkEntryState({ connection:{ environment:'dev', readOnly:false }, connected:true, database:'db' }).enabled, true)
+  assert.match(bulkEntryState({ connection:{ environment:'prod', readOnly:false }, connected:true, database:'db' }).reason, /生产环境/)
   assert.match(bulkEntryState({ connection:{ environment:'test', readOnly:true }, connected:true, database:'db' }).reason, /只读/)
   assert.match(bulkEntryState({ connection:{ environment:'test', readOnly:false }, connected:false, database:'db' }).reason, /连接/)
   assert.match(bulkEntryState({ connection:{ environment:'test', readOnly:false }, connected:true, database:'' }).reason, /数据库/)
@@ -56,5 +57,5 @@ test('instantaneous estimate enforces thirty dates and calculates points and wor
 })
 
 test('bulk error codes lead back to the relevant wizard step', () => {
-  assert.equal(stepForBulkError('BULK_TEST_CONNECTION_REQUIRED'), 1); assert.equal(stepForBulkError('RP_MISSING'), 1); assert.equal(stepForBulkError('POINT_LIMIT_EXCEEDED'), 2); assert.equal(stepForBulkError('CONSTRAINT_UNSATISFIABLE'), 3); assert.equal(stepForBulkError('STALE_BULK_PREVIEW'), 4); assert.equal(stepForBulkError('UNKNOWN'), 4)
+  assert.equal(stepForBulkError('BULK_WRITABLE_ENV_REQUIRED'), 1); assert.equal(stepForBulkError('RP_MISSING'), 1); assert.equal(stepForBulkError('POINT_LIMIT_EXCEEDED'), 2); assert.equal(stepForBulkError('CONSTRAINT_UNSATISFIABLE'), 3); assert.equal(stepForBulkError('STALE_BULK_PREVIEW'), 4); assert.equal(stepForBulkError('UNKNOWN'), 4)
 })

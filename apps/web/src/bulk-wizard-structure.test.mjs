@@ -16,3 +16,9 @@ test('wizard exposes the agreed four-step navigation labels', () => {
   const wizard = source('BulkDataWizard.tsx')
   for (const label of ['目标与 RP', '时间与天表', '字段与约束', '预览与执行']) assert.match(wizard, new RegExp(label))
 })
+
+test('wizard offers writable test and development connections but disables production', () => {
+  const wizard = source('BulkDataWizard.tsx')
+  assert.match(wizard, /item\.environment === 'test' \|\| item\.environment === 'dev'/)
+  assert.match(wizard, /测试、开发可写/)
+})

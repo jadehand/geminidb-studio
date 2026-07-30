@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import http from 'node:http'
 import test from 'node:test'
-import { closeInfluxAgents, getMeasurementSchema, InfluxHttpError, influxCommand, influxQuery, influxWrite, listDatabases, listMeasurements, listRetentionPolicies, listTagValues, normalizeEndpoint } from './influx-client.mjs'
+import { closeInfluxAgents, getMeasurementSchema, InfluxHttpError, influxCommand, influxQuery, influxWrite, listDatabases, listMeasurements, listRetentionPolicies, listTagValues, normalizeEndpoint, parseInfluxJson } from './influx-client.mjs'
 
 async function fixture() {
   const requests = []
@@ -163,4 +163,13 @@ test('influxQuery requests nanosecond epochs without changing the millisecond de
 
   await influxQuery(config, 'monitoring', 'SELECT value FROM cpu LIMIT 1')
   assert.equal(upstream.requests.at(-1).url.searchParams.get('epoch'), 'ms')
+})
+
+test('nanosecond JSON parsing preserves unquoted timestamps beyond Number safe precision', () => {
+  const payload = parseInfluxJson(
+    '{"results":[{"series":[{"columns":["time","value"],"values":[[1784995200000000001,7]]}]}]}',
+    { preserveLargeIntegers:true },
+  )
+  assert.equal(payload.results[0].series[0].values[0][0], '1784995200000000001')
+  assert.equal(payload.results[0].series[0].values[0][1], 7)
 })

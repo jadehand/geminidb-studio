@@ -65,8 +65,46 @@ function parseError(text, status) {
   }
 }
 
-function parseJson(text) {
-  try { return JSON.parse(text) } catch { throw new Error('GeminiDB Influx 返回了无法解析的 JSON') }
+function preserveUnsafeIntegerLiterals(text) {
+  let output = ''
+  let index = 0
+  let inString = false
+  let escaped = false
+  while (index < text.length) {
+    const character = text[index]
+    if (inString) {
+      output += character
+      if (escaped) escaped = false
+      else if (character === '\\') escaped = true
+      else if (character === '"') inString = false
+      index += 1
+      continue
+    }
+    if (character === '"') {
+      inString = true
+      output += character
+      index += 1
+      continue
+    }
+    if (character === '-' || /\d/.test(character)) {
+      const match = text.slice(index).match(/^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/)
+      if (match) {
+        const literal = match[0]
+        const isInteger = !/[.eE]/.test(literal)
+        const unsafe = isInteger && (BigInt(literal) > BigInt(Number.MAX_SAFE_INTEGER) || BigInt(literal) < BigInt(Number.MIN_SAFE_INTEGER))
+        output += unsafe ? JSON.stringify(literal) : literal
+        index += literal.length
+        continue
+      }
+    }
+    output += character
+    index += 1
+  }
+  return output
+}
+
+export function parseInfluxJson(text, { preserveLargeIntegers = false } = {}) {
+  try { return JSON.parse(preserveLargeIntegers ? preserveUnsafeIntegerLiterals(text) : text) } catch { throw new Error('GeminiDB Influx 返回了无法解析的 JSON') }
 }
 
 function resultError(payload) {
@@ -100,7 +138,7 @@ function parseDurationMs(value) {
 export async function influxQuery(config, database, sql, { epoch = 'ms' } = {}) {
   const started = performance.now()
   const response = await request(config, 'GET', queryPath(database, sql, epoch))
-  const payload = parseJson(response.text)
+  const payload = parseInfluxJson(response.text, { preserveLargeIntegers:epoch === 'ns' })
   const error = resultError(payload)
   if (error) throw new Error(error)
   const series = payload.results?.flatMap(result => result.series || []) || []
@@ -111,7 +149,7 @@ export async function influxQuery(config, database, sql, { epoch = 'ms' } = {}) 
 export async function influxCommand(config, database, command) {
   const started = performance.now()
   const response = await request(config, 'GET', queryPath(database, command))
-  const payload = parseJson(response.text)
+  const payload = parseInfluxJson(response.text)
   const error = resultError(payload)
   if (error) throw new Error(error)
   return { affectedRows:1, durationMs:Math.round(performance.now() - started), message:'INSERT 执行成功' }

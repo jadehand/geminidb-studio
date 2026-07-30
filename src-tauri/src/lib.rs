@@ -130,6 +130,11 @@ fn restart_bridge(app: tauri::AppHandle) -> BridgeStatus {
 }
 
 #[tauri::command]
+fn exit_app(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
 fn save_credential(id: String, password: String) -> Result<(), String> {
     keyring::Entry::new(CREDENTIAL_SERVICE, &id).map_err(|e| e.to_string())?.set_password(&password).map_err(|e| e.to_string())
 }
@@ -197,7 +202,8 @@ pub fn run() {
             delete_credential,
             export_result_file,
             bridge_status,
-            restart_bridge
+            restart_bridge,
+            exit_app
         ])
         .build(tauri::generate_context!())
         .expect("GeminiDB Studio desktop client failed to start");

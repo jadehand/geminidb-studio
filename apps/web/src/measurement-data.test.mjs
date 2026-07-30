@@ -1,6 +1,18 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { measurementDay, nextMeasurementOffset, normalizeMeasurementDataOptions, measurementRangeFromBeijingTime } from './measurement-data.ts'
+import { measurementDay, measurementPointMatchesSearch, nextMeasurementOffset, normalizeMeasurementDataOptions, measurementRangeFromBeijingTime } from './measurement-data.ts'
+
+test('current-page search matches time, tag, field names and field values case-insensitively', () => {
+  const point = {
+    id:'1', measurement:'cpu', timestampNs:'1784995200000000001', time:'1784995200000000001',
+    tags:{ host:'Node-01' }, fields:{ status:'Healthy', load:37.5, enabled:true, missing:null },
+  }
+  for (const query of ['178499', 'node-01', 'STATUS', 'healthy', '37.5', 'enabled', 'true']) {
+    assert.equal(measurementPointMatchesSearch(point, query), true)
+  }
+  assert.equal(measurementPointMatchesSearch(point, 'node-99'), false)
+  assert.equal(measurementPointMatchesSearch(point, '   '), true)
+})
 
 test('derives Beijing natural-day nanosecond bounds from a ten-digit suffix', () => {
   assert.deepEqual(measurementDay('cpu_1784995200'), {
@@ -12,6 +24,13 @@ test('derives Beijing natural-day nanosecond bounds from a ten-digit suffix', ()
 })
 
 test('defaults to a whole-day page of fifty rows', () => {
+  const day = measurementDay('cpu_1784995200')
+  assert.deepEqual(normalizeMeasurementDataOptions({ day }), {
+    limit: 50,
+    offset: 0,
+    startNs: day.startNs,
+    endNs: day.endNs,
+  })
   assert.deepEqual(normalizeMeasurementDataOptions({}), {
     limit: 50,
     offset: 0,

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { bridge } from './api'
-import { measurementDataPageForRequest, measurementDataRequestKey, measurementDay, measurementNanosecondsToBeijing, measurementRangeFromBeijingTime, nextMeasurementOffset, normalizeMeasurementDataOptions, type MeasurementDataOptions, type MeasurementDataResult, type ReadyConnectionSession } from './measurement-data'
+import { formatMeasurementTime, measurementDataPageForRequest, measurementDataRequestKey, measurementDay, measurementNanosecondsToBeijing, measurementPointMatchesSearch, measurementRangeFromBeijingTime, nextMeasurementOffset, normalizeMeasurementDataOptions, type MeasurementDataOptions, type MeasurementDataResult, type MeasurementTimeDisplay, type ReadyConnectionSession } from './measurement-data'
 import EditableFieldCell from './EditableFieldCell'
 import { applyUpdateResult, setDraftValue, updatesFromDraft, type MeasurementDraftState } from './measurement-editing'
 import { beginSubmission, emptySubmissionState, isCurrentSubmission, resetSubmissionForRequest, submissionCanBegin, type Submission } from './measurement-submission'
@@ -20,6 +20,17 @@ type Props = {
 }
 
 const PAGE_SIZES = [50, 100, 200, 500] as const
+const TIME_DISPLAY_STORAGE_KEY = 'geminidb-studio.measurement-time-display'
+
+function initialTimeDisplay(): MeasurementTimeDisplay {
+  try {
+    const saved = localStorage.getItem(TIME_DISPLAY_STORAGE_KEY)
+    if (saved === 'timestamp' || saved === 'utc' || saved === 'beijing') return saved
+  } catch {
+    // Storage can be unavailable in hardened desktop/browser contexts.
+  }
+  return 'beijing'
+}
 
 function timeTitle(value: string) {
   const beijing = measurementNanosecondsToBeijing(value)
@@ -30,7 +41,7 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
   const day = useMemo(() => measurementDay(tab.measurement), [tab.measurement])
   const requestKey = measurementDataRequestKey(tab, readyConnectionSession, currentDatabase)
   const available = requestKey !== null
-  const [options, setOptions] = useState<MeasurementDataOptions>(() => normalizeMeasurementDataOptions())
+  const [options, setOptions] = useState<MeasurementDataOptions>(() => normalizeMeasurementDataOptions({ day }))
   const [result, setResult] = useState<MeasurementDataResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -39,6 +50,8 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
   const [startTime, setStartTime] = useState('00:00:00')
   const [endTime, setEndTime] = useState('23:59:59.999999999')
   const [rangeError, setRangeError] = useState('')
+  const [search, setSearch] = useState('')
+  const [timeDisplay, setTimeDisplay] = useState<MeasurementTimeDisplay>(initialTimeDisplay)
   const [zoom, setZoom] = useGridZoom()
   const [submitting, setSubmitting] = useState(false)
   const [submitStatus, setSubmitStatus] = useState<{ message: string; error: boolean } | null>(null)
@@ -48,11 +61,11 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
   requestKeyRef.current = requestKey
 
   useEffect(() => {
-    setOptions(normalizeMeasurementDataOptions())
+    setOptions(normalizeMeasurementDataOptions({ day }))
     setResult(null)
     setError('')
     setRangeMode('whole')
-  }, [tab.id])
+  }, [tab.id, day])
 
   useEffect(() => {
     const active = submitController.current
@@ -104,6 +117,7 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
   const tags = page?.schema.tags ?? []
   const fields = page?.schema.fields ?? []
   const points = page?.points ?? []
+  const visiblePoints = useMemo(() => points.filter(point => measurementPointMatchesSearch(point, search)), [points, search])
   const displayedPage = page?.page ?? null
   const pageOffset = displayedPage?.offset ?? 0
   const hasMore = displayedPage?.hasMore ?? false
@@ -111,6 +125,15 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
   const drafts = requestKey ? draftsByRequest[requestKey] ?? {} : {}
   const draftCount = Object.keys(drafts).length
   const hasDrafts = draftCount > 0
+
+  function changeTimeDisplay(next: MeasurementTimeDisplay) {
+    setTimeDisplay(next)
+    try {
+      localStorage.setItem(TIME_DISPLAY_STORAGE_KEY, next)
+    } catch {
+      // The current view still switches even when the preference cannot persist.
+    }
+  }
 
   function runGuarded(continuation: () => void) {
     onGuardedAction(tab.id, hasDrafts, continuation)
@@ -120,7 +143,7 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
     runGuarded(() => {
       setRangeMode('whole')
       setRangeError('')
-      setOptions(current => normalizeMeasurementDataOptions({ limit: current.limit, offset: 0 }))
+      setOptions(current => normalizeMeasurementDataOptions({ limit: current.limit, offset: 0, day }))
     })
   }
 
@@ -221,6 +244,8 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
           <button type="button" onClick={applyCustomRange}>应用</button>
         </div>}
       </div>
+      <label className="measurement-page-search"><span>⌕</span><input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索当前页" aria-label="搜索当前页数据"/></label>
+      <label className="measurement-time-display">时间显示 <select value={timeDisplay} onChange={event => changeTimeDisplay(event.target.value as MeasurementTimeDisplay)} aria-label="时间显示格式"><option value="timestamp">时间戳</option><option value="utc">UTC</option><option value="beijing">北京时间</option></select></label>
       <label className="measurement-page-size">每页 <select value={options.limit} onChange={event => runGuarded(() => setOptions(current => normalizeMeasurementDataOptions({ ...current, limit: Number(event.target.value) as MeasurementDataOptions['limit'], offset: 0 })))}>{PAGE_SIZES.map(size => <option key={size} value={size}>{size}</option>)}</select> 行</label>
       <button type="button" onClick={() => runGuarded(() => setReload(value => value + 1))} disabled={loading}>刷新</button>
       {editable && hasDrafts && <><button type="button" onClick={discardDrafts} disabled={submitting}>放弃修改</button><button type="button" className="primary measurement-submit" onClick={submitDrafts} disabled={submitting}>{submitting ? '正在提交…' : `↑ 提交 ${draftCount} 项修改`}</button></>}
@@ -231,10 +256,10 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
     {submitStatus && <p className="measurement-submit-status" role={submitStatus.error ? 'alert' : 'status'}>{submitStatus.message}</p>}
     <div className="measurement-data-grid" aria-busy={loading}>
       {loading && !page ? <div className="measurement-data-loading">正在读取数据…</div> : <div className="measurement-data-scroll" tabIndex={0} aria-label="Measurement 数据表格"><table>
-        <thead><tr><th rowSpan={2} className="pinned">时间<small>精确时间</small></th>{tags.length > 0 && <th colSpan={tags.length}>Tags</th>}{fields.length > 0 && <th colSpan={fields.length}>Fields</th>}</tr><tr>{tags.map(tag => <th key={'tag-' + tag}>{tag}</th>)}{fields.map(field => <th key={'field-' + field.name}>{field.name}<small>{field.type}</small></th>)}</tr></thead>
-        <tbody>{points.map(point => <tr key={point.id}><td className="pinned measurement-time" title={timeTitle(point.time)}>{point.time}</td>{tags.map(tag => <td key={'tag-' + tag}>{point.tags[tag] ?? ''}</td>)}{fields.map(field => <EditableFieldCell key={'field-' + field.name} value={point.fields[field.name] ?? null} field={field} editable={editable && !submitting} draft={drafts[`${point.id}\u0000${field.name}`]} onChange={value => updateDraft(point, field, value)}/>)}</tr>)}</tbody>
-      </table>{!loading && points.length === 0 && <div className="measurement-data-empty">当前时段没有数据。</div>}</div>}
+        <thead><tr><th rowSpan={2} className="pinned">时间<small>{timeDisplay === 'timestamp' ? '纳秒时间戳' : timeDisplay === 'utc' ? 'UTC' : '北京时间'}</small></th>{tags.length > 0 && <th colSpan={tags.length}>Tags</th>}{fields.length > 0 && <th colSpan={fields.length}>Fields</th>}</tr><tr>{tags.map(tag => <th key={'tag-' + tag}>{tag}</th>)}{fields.map(field => <th key={'field-' + field.name}>{field.name}<small>{field.type}</small></th>)}</tr></thead>
+        <tbody>{visiblePoints.map(point => <tr key={point.id}><td className="pinned measurement-time" title={timeTitle(point.time)}>{formatMeasurementTime(point.time, timeDisplay)}</td>{tags.map(tag => <td key={'tag-' + tag}>{point.tags[tag] ?? ''}</td>)}{fields.map(field => <EditableFieldCell key={'field-' + field.name} value={point.fields[field.name] ?? null} field={field} editable={editable && !submitting} draft={drafts[`${point.id}\u0000${field.name}`]} onChange={value => updateDraft(point, field, value)}/>)}</tr>)}</tbody>
+      </table>{!loading && visiblePoints.length === 0 && <div className="measurement-data-empty">{points.length === 0 ? '当前时段没有数据。' : '当前页没有匹配数据。'}</div>}</div>}
     </div>
-    <footer className="measurement-data-pagination"><span>{loading ? '正在更新…' : '偏移 ' + pageOffset + ' · ' + points.length + ' 行'}</span><div><button type="button" disabled={loading || pageOffset === 0} onClick={() => movePage(-1)}>上一页</button><button type="button" disabled={loading || !hasMore} onClick={() => movePage(1)}>下一页</button></div></footer>
+    <footer className="measurement-data-pagination"><span>{loading ? '正在更新…' : search.trim() ? `偏移 ${pageOffset} · 当前页匹配 ${visiblePoints.length}/${points.length} 行` : `偏移 ${pageOffset} · ${points.length} 行`}</span><div><button type="button" disabled={loading || pageOffset === 0} onClick={() => movePage(-1)}>上一页</button><button type="button" disabled={loading || !hasMore} onClick={() => movePage(1)}>下一页</button></div></footer>
   </section>
 }

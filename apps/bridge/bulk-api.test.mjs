@@ -37,12 +37,12 @@ async function request(api, method, pathname, payload, current = session) {
   return api.handle({ method, pathname, searchParams:new URLSearchParams(), session:current, payload })
 }
 
-test('preview blocks non-test and read-only sessions with stable codes', async () => {
+test('preview allows development and blocks production, unknown, and read-only sessions', async () => {
   const { api } = fixture()
+  assert.equal((await request(api, 'POST', '/bulk-jobs/preview', planInput(), { ...session, environment:'dev' })).status, 200)
   for (const [current, code] of [
-    [{ ...session, environment:'prod' }, 'BULK_TEST_CONNECTION_REQUIRED'],
-    [{ ...session, environment:'dev' }, 'BULK_TEST_CONNECTION_REQUIRED'],
-    [{ ...session, environment:undefined }, 'BULK_TEST_CONNECTION_REQUIRED'],
+    [{ ...session, environment:'prod' }, 'BULK_WRITABLE_ENV_REQUIRED'],
+    [{ ...session, environment:undefined }, 'BULK_WRITABLE_ENV_REQUIRED'],
     [{ ...session, readOnly:true }, 'BULK_WRITE_CONNECTION_REQUIRED'],
   ]) {
     const result = await request(api, 'POST', '/bulk-jobs/preview', planInput(), current)
