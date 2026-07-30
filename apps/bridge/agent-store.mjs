@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { access, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { AgentError, isTerminalRunStatus } from './agent-types.mjs'
 
 const summary = ({ messages, runs, events, ...session }) => session
@@ -134,7 +134,7 @@ export function createAgentStore({ dataDir, now = Date.now } = {}) {
   const sessionPath = (id) => {
     id = assertId(id, 'sessionId')
     const path = resolve(resolvedSessionsDir, `${id}.json`)
-    if (dirname(path) !== resolvedSessionsDir || !path.startsWith(`${resolvedSessionsDir}/`)) {
+    if (dirname(path) !== resolvedSessionsDir || !path.startsWith(`${resolvedSessionsDir}${sep}`)) {
       throw invalid('Invalid sessionId')
     }
     return path
