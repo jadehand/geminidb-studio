@@ -143,6 +143,25 @@ claude auth status
 
 ## 本地启动
 
+### 本地 Mock GeminiDB（仅开发测试）
+
+没有真实 GeminiDB Influx 实例时，可以启动仓库内置的内存 Mock，用于验证连接、目录、Schema、基础查询、写入和在线编辑流程：
+
+```powershell
+npm run dev:mock
+```
+
+在 Studio 中新建“开发”环境连接并填写：
+
+- 地址：`http://127.0.0.1:8765`
+- 用户名：`demo`
+- 密码：`demo`
+- 环境：开发
+
+Mock 默认提供 `monitoring` Database 和一个当天的 `studio_demo_<时间戳>` Measurement。它只监听本机回环地址，数据仅保存在内存中，进程退出后数据清空。
+
+Mock 是独立开发脚本，不会由 Tauri 或 Bridge 自动启动，也不会进入正式安装包。它只能验证 Studio 自身流程和当前使用的 InfluxDB 1.x HTTP 契约，不能替代真实 GeminiDB 的兼容性、限制和性能测试。
+
 ### Web 开发模式
 
 首次启动或依赖发生变化时，在 PowerShell 中进入包含 `package.json` 的源码根目录：

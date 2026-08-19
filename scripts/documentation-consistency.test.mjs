@@ -48,3 +48,10 @@ test('current documentation describes only the local Claude assistant architectu
   assert.match(learningCenter, /Claude 助手/)
   assert.doesNotMatch(learningCenter, /Agent 工作台|`agent` 工作区|进入 Agent/)
 })
+
+test('README documents the development-only in-memory Mock GeminiDB',async()=>{
+  const readme=await readFile(new URL('README.md',root),'utf8')
+  for(const text of ['npm run dev:mock','http://127.0.0.1:8765','用户名：`demo`','密码：`demo`','进程退出后数据清空'])assert.match(readme,new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')))
+  assert.match(readme,/不会进入正式安装包/)
+  assert.match(readme,/不能替代真实 GeminiDB/)
+})
