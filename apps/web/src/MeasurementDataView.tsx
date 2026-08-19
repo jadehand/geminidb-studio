@@ -177,6 +177,7 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
     runGuarded(() => setOptions(current => normalizeMeasurementDataOptions({
       ...current,
       offset: nextMeasurementOffset(displayedPage, direction),
+      day,
     })))
   }
 
@@ -259,7 +260,7 @@ export default function MeasurementDataView({ tab, readyConnectionSession, curre
       <ResultGridZoomControls zoom={zoom} onChange={setZoom}/>
       <label className="measurement-page-search"><span>⌕</span><input type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索当前页" aria-label="搜索当前页数据"/></label>
       <label className="measurement-time-display">时间显示 <select value={timeDisplay} onChange={event => changeTimeDisplay(event.target.value as MeasurementTimeDisplay)} aria-label="时间显示格式"><option value="timestamp">时间戳</option><option value="utc">UTC</option><option value="beijing">北京时间</option></select></label>
-      <label className="measurement-page-size">每页 <select value={options.limit} onChange={event => runGuarded(() => setOptions(current => normalizeMeasurementDataOptions({ ...current, limit: Number(event.target.value) as MeasurementDataOptions['limit'], offset: 0 })))}>{PAGE_SIZES.map(size => <option key={size} value={size}>{size}</option>)}</select> 行</label>
+      <label className="measurement-page-size">每页 <select value={options.limit} onChange={event => runGuarded(() => setOptions(current => normalizeMeasurementDataOptions({ ...current, limit: Number(event.target.value) as MeasurementDataOptions['limit'], offset: 0, day })))}>{PAGE_SIZES.map(size => <option key={size} value={size}>{size}</option>)}</select> 行</label>
       <button type="button" onClick={() => runGuarded(() => setReload(value => value + 1))} disabled={loading}>刷新</button>
       {editable && hasDrafts && <><button type="button" onClick={discardDrafts} disabled={submitting}>放弃修改</button><button type="button" className="primary measurement-submit" onClick={submitDrafts} disabled={submitting}>{submitting ? '正在提交…' : `↑ 提交 ${draftCount} 项修改`}</button></>}
     </div>

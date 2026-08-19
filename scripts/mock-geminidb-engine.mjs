@@ -1,4 +1,5 @@
 const PRECISION_MULTIPLIER={ns:1n,u:1_000n,us:1_000n,ms:1_000_000n,s:1_000_000_000n,m:60_000_000_000n,h:3_600_000_000_000n}
+const DURATION_MULTIPLIER={...PRECISION_MULTIPLIER,d:86_400_000_000_000n,w:604_800_000_000_000n}
 
 export class MockGeminiDbError extends Error {
   constructor(message,status=400) {
@@ -242,10 +243,17 @@ export function createMockGeminiDbEngine({nowNs=()=>String(BigInt(Date.now())*1_
     const limit=Number(rawLimit),offset=Number(rawOffset)
     if(!Number.isSafeInteger(limit)||limit<1||!Number.isSafeInteger(offset)||offset<0)throw invalid('LIMIT/OFFSET 无效')
     const conditions=where?where.split(/\s+AND\s+/i).map(condition=>condition.trim()):[]
+    const queryNowNs=conditions.some(condition=>/\bnow\(\)/i.test(condition))?BigInt(nowNs()):null
     let points=[...(table?.points.values()||[])].filter(point=>conditions.every(condition=>{
       let conditionMatch=condition.match(/^time\s*(>=|<=|>|<|=)\s*(\d+)(ns|ms|s)?$/i)
       if(conditionMatch) {
         const current=BigInt(point.timestampNs),target=boundNs(conditionMatch[2],(conditionMatch[3]||'ns').toLowerCase())
+        return conditionMatch[1]==='>='?current>=target:conditionMatch[1]==='<='?current<=target:conditionMatch[1]==='>'?current>target:conditionMatch[1]==='<'?current<target:current===target
+      }
+      conditionMatch=condition.match(/^time\s*(>=|<=|>|<|=)\s*now\(\)\s*([+-])\s*(\d+)(ns|u|us|ms|s|m|h|d|w)$/i)
+      if(conditionMatch) {
+        const current=BigInt(point.timestampNs),duration=BigInt(conditionMatch[3])*DURATION_MULTIPLIER[conditionMatch[4].toLowerCase()]
+        const target=queryNowNs+(conditionMatch[2]==='+'?duration:-duration)
         return conditionMatch[1]==='>='?current>=target:conditionMatch[1]==='<='?current<=target:conditionMatch[1]==='>'?current>target:conditionMatch[1]==='<'?current<target:current===target
       }
       conditionMatch=condition.match(/^((?:"(?:\\.|[^"])*)"|[A-Za-z_][\w.-]*)\s*(=|!=)\s*(.+)$/)

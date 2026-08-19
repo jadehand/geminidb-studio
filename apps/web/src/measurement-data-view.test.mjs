@@ -91,6 +91,13 @@ test('measurement data view searches the currently loaded page without issuing a
   assert.match(source, /当前页匹配/)
 })
 
+test('page size and pagination preserve the selected measurement day', async () => {
+  const source = await readFile(new URL('./MeasurementDataView.tsx', import.meta.url), 'utf8')
+
+  assert.match(source, /offset:\s*nextMeasurementOffset\(displayedPage, direction\),\s*day,/)
+  assert.match(source, /limit:\s*Number\(event\.target\.value\)\s+as\s+MeasurementDataOptions\['limit'\],\s*offset:\s*0,\s*day/)
+})
+
 test('app gives an active measurement data tab the full main workspace', async () => {
   const source = await readFile(new URL('./App.tsx', import.meta.url), 'utf8')
 
