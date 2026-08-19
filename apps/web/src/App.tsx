@@ -5,7 +5,7 @@ import { deleteCredential, loadCredential, saveCredential } from './credentials'
 import { dayTablePrefix, filterDayTables, type DayRange } from './day-tables'
 import ResultsTable from './ResultsTable'
 import { beginSession, clearWorkspace, endSession, migrateWorkspaceTabs, readWorkspace, writeWorkspace } from './workspace'
-import { chooseExportDirectory, destroyDesktopWindow, getDesktopBridgeStatus, registerDesktopCloseGuard, restartDesktopBridge, writeExportFile, type DesktopBridgeStatus } from './desktop'
+import { chooseExportDirectory, currentExportDirectory, destroyDesktopWindow, getDesktopBridgeStatus, registerDesktopCloseGuard, restartDesktopBridge, writeExportFile, type DesktopBridgeStatus } from './desktop'
 import { connectionForTransport, endpointProtocol, withEndpointProtocol } from './endpoint'
 import { clampSidebarWidth, DEFAULT_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH } from './sidebar-width'
 import { conversionFromMilliseconds, formatBeijing, formatUtcInput, parseDateTime, parseUnixTimestamp, type DateTimeZone, type TimeConversion } from './time-converter'
@@ -130,7 +130,10 @@ export default function App() {
   const [bridgeRetrying,setBridgeRetrying]=useState(false)
   const [exportDirectory,setExportDirectory]=useState(()=>load('gdb.exportDirectory',''))
   const [exportSettingsOpen,setExportSettingsOpen]=useState(false)
-  const [exportDirectoryDraft,setExportDirectoryDraft]=useState(exportDirectory)
+  const [exportDirectoryDraft,setExportDirectoryDraftState]=useState(exportDirectory)
+  const [exportUsesSystemDirectory,setExportUsesSystemDirectory]=useState(!exportDirectory)
+  const exportDirectoryDirtyRef=useRef(false)
+  function setExportDirectoryDraft(value:string){exportDirectoryDirtyRef.current=true;setExportDirectoryDraftState(value)}
   const [completionEnabled,setCompletionEnabled]=useState(()=>load('gdb.completionEnabled',true))
   const [databaseHintOpen,setDatabaseHintOpen]=useState(()=>!load('gdb.databaseSwitcherSeen',false))
   const [learningProgress,setLearningProgress]=useState<LearningProgress>(INITIAL_LEARNING_PROGRESS)
@@ -148,6 +151,15 @@ export default function App() {
   measurementDraftsRef.current=measurementDraftsByTab
   workspaceTabsRef.current=workspaceTabs
   activeWorkspaceTabIdRef.current=activeTabId
+
+  useEffect(()=>{
+    if(!exportSettingsOpen)return
+    let cancelled=false
+    exportDirectoryDirtyRef.current=false
+    setExportUsesSystemDirectory(!exportDirectory)
+    void currentExportDirectory(exportDirectory).then(resolved=>{if(!cancelled&&!exportDirectoryDirtyRef.current)setExportDirectoryDraftState(resolved)}).catch(error=>{if(!cancelled)toast(error instanceof Error?error.message:'无法读取当前导出目录')})
+    return()=>{cancelled=true}
+  },[exportSettingsOpen,exportDirectory])
 
   const currentConnection = connections.find(c => c.id === activeConnection) || connections[0]
   currentConnectionRef.current = currentConnection
@@ -310,7 +322,7 @@ export default function App() {
     }
   }
   function confirmDeleteConnection() { guardAllMeasurementDrafts(confirmDeleteConnectionNow) }
-  function switchTool(tool: SideTool) { if (tool === sideTool && sideOpen) { setSideOpen(false); save('gdb.sideOpen', false); return } setSideTool(tool); setSideOpen(true); save('gdb.sideTool', tool); save('gdb.sideOpen', true);if(tool==='knowledge')showGuideHint('knowledge') }
+  function switchTool(tool: SideTool) { const leavingNotes=primaryWorkspace==='notes';switchWorkspace('query');if (!leavingNotes&&tool === sideTool && sideOpen) { setSideOpen(false); save('gdb.sideOpen', false); return } setSideTool(tool); setSideOpen(true); save('gdb.sideTool', tool); save('gdb.sideOpen', true);if(tool==='knowledge')showGuideHint('knowledge') }
   function resizeSidebarBy(next:number){const width=fitSidebarWidth(next);setSidebarWidth(width);save('gdb.sidebarWidth',width)}
   function beginSidebarResize(event:React.PointerEvent<HTMLButtonElement>){event.preventDefault();const origin=event.clientX,start=sidebarWidth;setSidebarDragging(true);const move=(next:PointerEvent)=>setSidebarWidth(fitSidebarWidth(start+next.clientX-origin));const stop=(next:PointerEvent)=>{const width=fitSidebarWidth(start+next.clientX-origin);setSidebarWidth(width);save('gdb.sidebarWidth',width);setSidebarDragging(false);window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',stop)};window.addEventListener('pointermove',move);window.addEventListener('pointerup',stop)}
 
@@ -611,20 +623,24 @@ export default function App() {
     try {
       const selected=await chooseExportDirectory()
       if(!selected)return
-      setExportDirectory(selected);save('gdb.exportDirectory',selected);toast(`导出目录：${selected}`)
+      exportDirectoryDirtyRef.current=true;setExportDirectoryDraft(selected);setExportUsesSystemDirectory(false)
     } catch(error) { toast(error instanceof Error?error.message:'无法选择导出目录') }
   }
-  function resetExportDirectory(){setExportDirectory('');setExportDirectoryDraft('');save('gdb.exportDirectory','');setExportSettingsOpen(false);toast('已恢复系统下载目录')}
+  async function useSystemExportDirectory(){
+    try{exportDirectoryDirtyRef.current=true;setExportDirectoryDraft(await currentExportDirectory(''));setExportUsesSystemDirectory(true)}
+    catch(error){toast(error instanceof Error?error.message:'无法读取系统下载目录')}
+  }
+  function saveExportDirectory(){const draft=exportDirectoryDraft.trim(),next=exportUsesSystemDirectory&&draft!==exportDirectory.trim()?'':draft;setExportDirectory(next);save('gdb.exportDirectory',next);setExportSettingsOpen(false);toast(next?'导出目录已保存':'已使用系统下载目录')}
   async function copyResults() { if (!rows.length) return toast('没有可复制的结果'); try { await navigator.clipboard.writeText(jsonContent(rows)); toast('结果已复制') } catch { toast('复制失败，请检查剪贴板权限') } }
 
   return <div className={`app ${sideOpen ? '' : 'sidebar-closed'} ${primaryWorkspace==='notes'?'notes-active':''}`} style={{'--sidebar-width':`${sidebarWidth}px`} as React.CSSProperties}>
     {bridgeStatus&&!bridgeStatus.running&&<div className="bridge-alert" role="alert"><span><b>GeminiDB Bridge 启动失败</b><small>{bridgeStatus.error||'后台服务不可用，客户端仍可打开。'}{bridgeStatus.logPath&&<> · 日志：{bridgeStatus.logPath}</>}</small></span><button disabled={bridgeRetrying} onClick={()=>void retryBridge()}>{bridgeRetrying?'正在重试…':'重试 Bridge'}</button></div>}
-    <header><div className="brand"><span className="brand-mark"/><b>GeminiDB Studio</b></div><nav className="primary-workspaces" aria-label="一级工作区"><button className={primaryWorkspace==='query'?'active':''} onClick={()=>switchWorkspace('query')}>查询与数据</button><button className={primaryWorkspace==='notes'?'active':''} onClick={()=>switchWorkspace('notes')}>个人笔记</button></nav><div className="topbar">
+    <header><div className="brand"><span className="brand-mark"/><b>GeminiDB Studio</b></div><div className="topbar">
       <div className="database-switcher" data-tour="database-switcher"><label><span>Database</span><select aria-label="当前 Database" title="切换当前 Database，无需执行 USE 命令" value={database} onChange={e => void changeDatabase(e.target.value)} disabled={!databases.length}>{databases.map(db => <option key={db}>{db}</option>)}</select></label>{databaseHintOpen&&!activeGuide&&learningProgress.topics['quick-start']!=='new'&&databases.length>1&&<div className="database-coachmark" role="status"><b>切换 Database</b><p>可直接在这里选择，无需执行 <code>USE database_xxx</code>。</p><button onClick={dismissDatabaseHint}>知道了</button></div>}</div>
       <button className="bulk-entry" data-tour="bulk-data" style={{ marginLeft:24 }} disabled={!bulkEntry.enabled} title={bulkEntry.reason || '批量生成测试数据'} onClick={() => { if (!bulkEntry.enabled) return;showGuideHint('bulk-data'); setBulkWizardOpen(true); void bridge.activeBulkJob().then(setActiveBulkJob).catch(error => { if (error instanceof BridgeError && error.code === 'BULK_JOB_NOT_FOUND') setActiveBulkJob(null); else toast(error instanceof Error ? error.message : '无法读取进行中的任务') }) }}>▦ {activeBulkJob&&isUnfinishedBulkJob(activeBulkJob.status)?`批量造数 ${activeBulkJob.totalPoints?Math.round(activeBulkJob.completedPoints/activeBulkJob.totalPoints*100):0}%`:'批量造数'}</button><button className="utility-button time-tool" data-tour="time-converter" onClick={() => setTimeDialog(true)} title="UTC、北京时间与 Unix 时间戳互相转换"><span>◷</span><b>时间转换</b></button><button className={`icon-button tour-help ${learningProgress.seenRelease!==CURRENT_LEARNING_RELEASE?'has-update':''}`} onClick={openLearning} title="打开学习中心" aria-label="打开学习中心">?</button><button className="utility-button theme-tool" onClick={cycleTheme} title={`当前：${THEME_LABEL[themePreference]}；点击切换主题`}><span>{resolvedTheme==='dark'?'☾':'◐'}</span><b>{THEME_LABEL[themePreference]}</b></button><button className={`connection-state connection-control env-${currentConnection?.environment||'dev'} ${status.includes('失败') ? 'error' : ''}`} onClick={() => currentConnection && setConnectionDialog(currentConnection)} title="编辑当前连接"><i/>{status}<UiIcon name="settings"/></button>
     </div></header>
 
-    <aside className="left-sidebar"><nav className="tool-rail" aria-label="工具窗口"><button className={sideOpen && sideTool === 'connections' ? 'active' : ''} onClick={() => switchTool('connections')} title="连接"><UiIcon name="connection"/></button><button data-tour="catalog" className={sideOpen && sideTool === 'catalog' ? 'active' : ''} onClick={() => switchTool('catalog')} title="数据目录"><UiIcon name="catalog"/></button><button className={sideOpen && sideTool === 'knowledge' ? 'active' : ''} onClick={() => switchTool('knowledge')} title="语法知识库"><UiIcon name="knowledge"/></button></nav>
+    <aside className="left-sidebar"><nav className="tool-rail" aria-label="工具窗口"><button className={sideOpen && sideTool === 'connections' && primaryWorkspace==='query' ? 'active' : ''} onClick={() => switchTool('connections')} title="连接"><UiIcon name="connection"/></button><button data-tour="catalog" className={sideOpen && sideTool === 'catalog' && primaryWorkspace==='query' ? 'active' : ''} onClick={() => switchTool('catalog')} title="数据目录"><UiIcon name="catalog"/></button><button className={sideOpen && sideTool === 'knowledge' && primaryWorkspace==='query' ? 'active' : ''} onClick={() => switchTool('knowledge')} title="语法知识库"><UiIcon name="knowledge"/></button><button className={primaryWorkspace==='notes'?'active':''} onClick={()=>switchWorkspace('notes')} title="个人笔记"><UiIcon name="notes"/></button></nav>
 <div className="side-content">{sideTool === 'connections' ? <section className="side-panel"><PanelTitle title="连接" count={connections.length} action={<button className="panel-add" data-tour="new-connection" onClick={() => setConnectionDialog({...NEW_INFLUX_CONNECTION})}><span>＋</span> 新建</button>}/><div className="panel-scroll connection-list">{!connections.length&&<Empty text="尚未添加连接" sub="点击右上角“新建”开始连接 GeminiDB"/>}{connections.map(connection => <div key={connection.id} className={`connection-item ${connection.id === activeConnection ? 'active' : ''}`}><button className="connection-row" onClick={() => selectConnection(connection)}><span className="connection-glyph"><UiIcon name="connection"/></span><span><b>{connection.name}</b><small>{connection.endpoint}</small></span></button><button className="connection-more" onClick={() => setConnectionDialog(connection)} aria-label={`编辑 ${connection.name}`} title="编辑连接">•••</button></div>)}</div></section> : sideTool === 'catalog' ?
       <section className="side-panel"><PanelTitle title="数据目录" count={databases.length}/><div className="catalog-tools"><small>{database||'未连接'}<span>·</span>{filteredTables.length} 张天表</small><select value={dayRange} onChange={event=>setDayRange(event.target.value as DayRange)} title="按日期筛选"><option value="all">全部</option><option value="today">今天</option><option value="yesterday">昨天</option><option value="7d">近7天</option></select><button onClick={() => void connect()} title="刷新数据目录">↻</button></div><div className="search"><span><UiIcon name="search"/></span><input value={filter} onChange={e => setFilter(e.target.value)} placeholder="筛选 Measurement 或表名"/></div><div className="tree">{databases.map(db=>{const active=db===database;const open=active&&databaseOpen;return <div key={db} className="database-node"><button className={`tree-row tree-toggle database-row ${active?'selected':''}`} aria-expanded={open} onClick={()=>chooseDatabaseNode(db)} title={db}><UiIcon name="chevron" open={open}/><UiIcon name="database"/><b>{db}</b><em>{active?'当前':'Database'}</em></button>{open&&<><button className="tree-row level-1 tree-toggle" aria-expanded={measurementsOpen} onClick={()=>setMeasurementsOpen(value=>!value)}><UiIcon name="chevron" open={measurementsOpen}/><UiIcon name="layers"/><b>Measurements</b><em>{filteredTables.length}</em></button>{measurementsOpen&&Object.entries(tableGroups).map(([prefix, group]) => {const groupOpen=!collapsedGroups.has(prefix);return <div key={prefix}><button className="tree-row level-2 tree-toggle" aria-expanded={groupOpen} onClick={()=>toggleGroup(prefix)}><UiIcon name="chevron" open={groupOpen}/><UiIcon name="table"/><b>{prefix}</b><em>{group.length}</em></button>{groupOpen&&group.toSorted().reverse().map(table => { const parsed = splitTable(table); return <button key={table} title={table} onClick={event => openMeasurementActions(table, event.currentTarget)} onContextMenu={event => { event.preventDefault(); openMeasurementActions(table, event.currentTarget, event.clientX, event.clientY) }} className={`tree-row table-row level-3 ${table === selectedTable ? 'selected' : ''}`}><span className="tree-guide"/><span><b>{day(parsed.timestamp)}</b><small>{table}</small></span></button> })}</div>})}</>}</div>})}</div></section> : <KnowledgeBasePanel measurement={selectedTable} onInsert={openKnowledgeSql}/>}</div>
     </aside>
@@ -645,7 +661,7 @@ export default function App() {
     {currentConnection && <BulkDataWizard open={bulkWizardOpen} connection={currentConnection} connections={connections} databases={databases} database={database} tables={tables} activeJob={activeBulkJob} onConnectionChange={selectConnection} onDatabaseChange={changeDatabase} onClose={() => setBulkWizardOpen(false)} onJobChange={setActiveBulkJob} onNotify={toast}/>}
     {bulkCloseGuardOpen&&<div className="modal"><div className="dialog"><h2>批量造数仍在运行</h2><p>直接退出会中断尚未写入的批次。已成功写入的数据不会回滚。</p><div className="dialog-actions"><button disabled={bulkExitBusy} onClick={()=>setBulkCloseGuardOpen(false)}>继续运行</button><button className="danger" disabled={bulkExitBusy} onClick={()=>void stopBulkAndExit()}>{bulkExitBusy?'正在停止…':'停止任务并退出'}</button></div></div></div>}
     {schemaDialog&&<SchemaDialog database={database} measurement={schemaDialog.measurement} schema={schemaDialog.schema} loading={schemaLoading} onRefresh={refreshSchemaDialog} onClose={()=>setSchemaDialog(null)} onMessage={toast}/>}
-    {exportSettingsOpen&&<div className="modal"><div className="dialog export-settings-dialog"><h2>导出设置</h2><p>填写本机目录地址；留空时使用系统下载目录。</p><label>导出目录<input autoFocus value={exportDirectoryDraft} onChange={event=>setExportDirectoryDraft(event.target.value)} placeholder="例如：D:\\geminidb-exports"/></label><div className="dialog-actions"><button onClick={()=>setExportSettingsOpen(false)}>取消</button><span><button onClick={resetExportDirectory}>使用系统下载目录</button><button className="primary" onClick={()=>{setExportDirectory(exportDirectoryDraft.trim());save('gdb.exportDirectory',exportDirectoryDraft.trim());setExportSettingsOpen(false);toast(exportDirectoryDraft.trim()?'导出目录已保存':'已恢复系统下载目录')}}>保存</button></span></div></div></div>}
+    {exportSettingsOpen&&<div className="modal"><div className="dialog export-settings-dialog"><h2>导出设置</h2><p>{exportUsesSystemDirectory?'当前使用系统下载目录。':'当前使用自定义导出目录。'}</p><label>导出目录<input autoFocus value={exportDirectoryDraft} onChange={event=>{setExportDirectoryDraft(event.target.value);setExportUsesSystemDirectory(false)}} aria-label="当前导出目录"/></label><div className="dialog-actions"><button onClick={()=>setExportSettingsOpen(false)}>取消</button><span><button onClick={()=>void useSystemExportDirectory()}>使用系统下载目录</button><button onClick={()=>void selectExportDirectory()}>选择目录</button><button className="primary" onClick={saveExportDirectory}>保存</button></span></div></div></div>}
     {measurementAction&&<MeasurementActionMenu anchor={measurementAction.anchor} measurement={measurementAction.measurement} onViewData={()=>viewMeasurementData(measurementAction.measurement,measurementAction.context)} onNewQuery={()=>createMeasurementQuery(measurementAction.measurement,measurementAction.context)} onViewSchema={()=>void viewMeasurementSchema(measurementAction.measurement,measurementAction.context)} onClose={closeMeasurementActions}/>}
     {learningOpen&&<LearningCenter progress={learningProgress} onClose={()=>setLearningOpen(false)} onStart={startGuide} onReset={()=>persistLearning(initialLearningProgress(null,'new'))}/>}
     {activeGuide&&<FeatureTour topicTitle={topicById(activeGuide).title} steps={topicById(activeGuide).steps} onComplete={()=>finishGuide('completed')} onSkip={()=>finishGuide('skipped')}/>}
@@ -656,7 +672,7 @@ export default function App() {
   </div>
 }
 
-type UiIconName = 'catalog' | 'chevron' | 'connection' | 'database' | 'knowledge' | 'layers' | 'search' | 'settings' | 'table'
+type UiIconName = 'catalog' | 'chevron' | 'connection' | 'database' | 'knowledge' | 'layers' | 'notes' | 'search' | 'settings' | 'table'
 function UiIcon({ name, open = false }: { name: UiIconName; open?: boolean }) {
   const paths: Record<Exclude<UiIconName, 'chevron'>, React.ReactNode> = {
     catalog:<><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></>,
@@ -664,6 +680,7 @@ function UiIcon({ name, open = false }: { name: UiIconName; open?: boolean }) {
     database:<><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12v7c0 1.7 3.6 3 8 3s8-1.3 8-3v-7"/></>,
     layers:<><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></>,
     knowledge:<><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H11a3 3 0 0 1 3 3v15a3 3 0 0 0-3-3H4V4.5Z"/><path d="M20 4.5A2.5 2.5 0 0 0 17.5 2H14v18a3 3 0 0 1 3-3h3V4.5Z"/></>,
+    notes:<><path d="M5 3h11l3 3v15H5z"/><path d="M16 3v4h4M8 11h8M8 15h8M8 19h5"/></>,
     search:<><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></>,
     settings:<><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></>,
     table:<><rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 9h18M8 9v11"/></>

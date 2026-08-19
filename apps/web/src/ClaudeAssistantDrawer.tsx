@@ -57,8 +57,10 @@ export default function ClaudeAssistantDrawer({
   const [savingSettings,setSavingSettings]=useState(false)
   const [drawerWidth,setDrawerWidth]=useState(initialDrawerWidth)
   const [drawerDragging,setDrawerDragging]=useState(false)
+  const [assistantError,setAssistantError]=useState('')
   const [deleteTarget,setDeleteTarget]=useState<ClaudeAssistantSessionSummary>()
   const abortRef=useRef<AbortController|undefined>(undefined)
+  const drawerDragRef=useRef<{pointerId:number;origin:number;start:number}|null>(null)
 
   const refresh=useCallback(async()=>{
     const next=await claudeAssistantApi.listSessions()
@@ -79,12 +81,13 @@ export default function ClaudeAssistantDrawer({
     setInitializing(true)
     void Promise.all([refresh(),claudeAssistantApi.probe(),claudeAssistantApi.getSettings()]).then(async([next,nextProbe,nextSettings])=>{
       if(cancelled)return
+      setAssistantError('')
       setProbe(nextProbe)
       setCliPathDraft(nextSettings.cliPath)
       const id=activeId&&next.some(item=>item.id===activeId)?activeId:next[0]?.id
       if(id)await loadSession(id)
       else setActive(undefined)
-    }).catch(error=>!cancelled&&onNotify(error instanceof Error?error.message:'Claude 助手加载失败'))
+    }).catch(error=>{if(!cancelled){const message=error instanceof Error?error.message:'Claude 助手加载失败';setAssistantError(message);onNotify(message)}})
       .finally(()=>!cancelled&&setInitializing(false))
     return()=>{cancelled=true}
   },[open,activeId,loadSession,onNotify,refresh])
@@ -110,6 +113,7 @@ export default function ClaudeAssistantDrawer({
   },[search,sessions])
 
   async function createSession(title='新会话') {
+    setAssistantError('')
     const created=await claudeAssistantApi.createSession(title)
     setActiveId(created.id)
     setActive(created)
@@ -118,7 +122,15 @@ export default function ClaudeAssistantDrawer({
   }
 
   function notifyCreateFailure(error:unknown) {
-    onNotify(error instanceof Error?error.message:'新建 Claude 会话失败')
+    const message=error instanceof Error?error.message:'新建 Claude 会话失败'
+    setAssistantError(message)
+    onNotify(message)
+  }
+
+  function reportAssistantError(error:unknown,fallback='Claude 助手操作失败') {
+    const message=error instanceof Error?error.message:fallback
+    setAssistantError(message)
+    onNotify(message)
   }
 
   async function saveCliSettings() {
@@ -129,8 +141,9 @@ export default function ClaudeAssistantDrawer({
       setCliPathDraft(settings.cliPath)
       const nextProbe=await claudeAssistantApi.probe()
       setProbe(nextProbe)
+      setAssistantError('')
       onNotify(nextProbe.ready?'Claude CLI 路径已保存并检测成功':`路径已保存：${nextProbe.message}`)
-    }catch(error){onNotify(error instanceof Error?error.message:'Claude CLI 路径保存失败')}
+    }catch(error){const message=error instanceof Error?error.message:'Claude CLI 路径保存失败';setAssistantError(message);onNotify(message)}
     finally{setSavingSettings(false)}
   }
 
@@ -142,23 +155,33 @@ export default function ClaudeAssistantDrawer({
 
   function beginDrawerResize(event:React.PointerEvent<HTMLButtonElement>) {
     event.preventDefault()
-    const origin=event.clientX,start=drawerWidth
+    event.currentTarget.setPointerCapture(event.pointerId)
+    drawerDragRef.current={pointerId:event.pointerId,origin:event.clientX,start:drawerWidth}
     setDrawerDragging(true)
-    const move=(next:PointerEvent)=>setDrawerWidth(fitClaudeDrawerWidth(start+origin-next.clientX,window.innerWidth))
-    const stop=(next:PointerEvent)=>{
-      resizeDrawerBy(start+origin-next.clientX)
-      setDrawerDragging(false)
-      window.removeEventListener('pointermove',move)
-      window.removeEventListener('pointerup',stop)
-    }
-    window.addEventListener('pointermove',move)
-    window.addEventListener('pointerup',stop)
+  }
+
+  function moveDrawerResize(event:React.PointerEvent<HTMLButtonElement>) {
+    const drag=drawerDragRef.current
+    if(!drag||drag.pointerId!==event.pointerId)return
+    setDrawerWidth(fitClaudeDrawerWidth(drag.start+drag.origin-event.clientX,window.innerWidth))
+  }
+
+  function endDrawerResize(event:React.PointerEvent<HTMLButtonElement>) {
+    const drag=drawerDragRef.current
+    if(!drag||drag.pointerId!==event.pointerId)return
+    const width=fitClaudeDrawerWidth(drag.start+drag.origin-event.clientX,window.innerWidth)
+    setDrawerWidth(width)
+    window.localStorage.setItem(drawerWidthKey,String(width))
+    drawerDragRef.current=null
+    setDrawerDragging(false)
+    if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId)
   }
 
   async function submit(content:string,attachments:ClaudeAssistantAttachments) {
     const message=content.trim()
     if(!message||loading)return
     setLoading(true)
+    setAssistantError('')
     const controller=new AbortController()
     abortRef.current=controller
     let resolvedSessionId=active?.id??''
@@ -174,7 +197,7 @@ export default function ClaudeAssistantDrawer({
       await refresh()
     }catch(error){
       if(controller.signal.aborted)onNotify('已停止 Claude 回复')
-      else onNotify(error instanceof Error?error.message:'Claude 回复失败')
+      else {const message=error instanceof Error?error.message:'Claude 回复失败';setAssistantError(message);onNotify(message)}
       if(resolvedSessionId)void loadSession(resolvedSessionId).catch(()=>{})
     }finally{
       if(abortRef.current===controller)abortRef.current=undefined
@@ -196,36 +219,28 @@ export default function ClaudeAssistantDrawer({
       setTitleDraft(active?.title??'')
       return
     }
-    const next=await claudeAssistantApi.renameSession(active.id,titleDraft.trim())
-    setActive(next)
-    setTitleDraft(next.title)
-    await refresh()
+    try{const next=await claudeAssistantApi.renameSession(active.id,titleDraft.trim());setActive(next);setTitleDraft(next.title);await refresh()}
+    catch(error){reportAssistantError(error,'重命名 Claude 会话失败')}
   }
 
   async function confirmDelete() {
     if(!deleteTarget)return
-    const id=deleteTarget.id
-    await claudeAssistantApi.deleteSession(id)
-    setDeleteTarget(undefined)
-    const next=await refresh()
-    if(activeId===id) {
-      const replacement=next[0]
-      if(replacement)await loadSession(replacement.id)
-      else {setActiveId('');setActive(undefined)}
-    }
+    try{const id=deleteTarget.id;await claudeAssistantApi.deleteSession(id);setDeleteTarget(undefined);const next=await refresh();if(activeId===id){const replacement=next[0];if(replacement)await loadSession(replacement.id);else{setActiveId('');setActive(undefined)}}}
+    catch(error){reportAssistantError(error,'删除 Claude 会话失败')}
   }
 
   return <aside className={`claude-assistant-drawer ${open?'open':''}`} aria-label="Claude 助手" style={{width:drawerWidth}}>
-    <button className={`claude-assistant-resizer ${drawerDragging?'dragging':''}`} type="button" role="separator" aria-label="调整 Claude 助手宽度" aria-orientation="vertical" aria-valuemin={520} aria-valuemax={Math.max(520,window.innerWidth-96)} aria-valuenow={drawerWidth} onPointerDown={beginDrawerResize} onDoubleClick={()=>resizeDrawerBy(DEFAULT_CLAUDE_DRAWER_WIDTH)} onKeyDown={event=>{if(event.key==='ArrowLeft'){event.preventDefault();resizeDrawerBy(drawerWidth+16)}if(event.key==='ArrowRight'){event.preventDefault();resizeDrawerBy(drawerWidth-16)}if(event.key==='Home'){event.preventDefault();resizeDrawerBy(520)}if(event.key==='End'){event.preventDefault();resizeDrawerBy(window.innerWidth)}}} title="拖动调整宽度，双击恢复默认"/>
+    <button className={`claude-assistant-resizer ${drawerDragging?'dragging':''}`} type="button" role="separator" aria-label="调整 Claude 助手宽度" aria-orientation="vertical" aria-valuemin={520} aria-valuemax={Math.max(520,window.innerWidth-96)} aria-valuenow={drawerWidth} onPointerDown={beginDrawerResize} onPointerMove={moveDrawerResize} onPointerUp={endDrawerResize} onPointerCancel={endDrawerResize} onDoubleClick={()=>resizeDrawerBy(DEFAULT_CLAUDE_DRAWER_WIDTH)} onKeyDown={event=>{if(event.key==='ArrowLeft'){event.preventDefault();resizeDrawerBy(drawerWidth+16)}if(event.key==='ArrowRight'){event.preventDefault();resizeDrawerBy(drawerWidth-16)}if(event.key==='Home'){event.preventDefault();resizeDrawerBy(520)}if(event.key==='End'){event.preventDefault();resizeDrawerBy(window.innerWidth)}}} title="拖动调整宽度，双击恢复默认"/>
     <header className="claude-assistant-head"><div><b>✦ Claude 助手</b><small>{probe?.ready?'本地 CLI 已就绪':probe?.message||'检测本地 Claude CLI'}</small></div><button onClick={onClose} aria-label="关闭 Claude 助手">×</button></header>
     <div className="claude-cli-settings"><label><span>Claude CLI 路径</span><input value={cliPathDraft} onChange={event=>setCliPathDraft(event.target.value)} placeholder="留空使用自动检测" aria-label="Claude CLI 路径"/></label><button onClick={()=>void saveCliSettings()} disabled={savingSettings}>{savingSettings?'检测中…':'保存并检测'}</button><small>Claude Code CLI 的自定义路径；留空使用系统自动检测。</small></div>
     <div className="claude-assistant-layout">
       <nav className="claude-history" aria-label="聊天历史">
         <button className="primary claude-new-session" onClick={()=>void createSession().catch(notifyCreateFailure)}>＋ 新建会话</button>
         <input value={search} onChange={event=>setSearch(event.target.value)} placeholder="搜索历史" aria-label="搜索历史"/>
-        <div className="claude-history-list">{visibleSessions.map(item=><div key={item.id} className={item.id===activeId?'active':''}><button onClick={()=>void loadSession(item.id)}><b>{item.title}</b><small>{new Date(item.updatedAt).toLocaleString('zh-CN')}</small></button><button className="claude-delete-session" onClick={()=>setDeleteTarget(item)} aria-label={`删除 ${item.title}`}>×</button></div>)}</div>
+        <div className="claude-history-list">{visibleSessions.map(item=><div key={item.id} className={item.id===activeId?'active':''}><button onClick={()=>void loadSession(item.id).then(()=>setAssistantError('')).catch(error=>reportAssistantError(error,'读取 Claude 会话失败'))}><b>{item.title}</b><small>{new Date(item.updatedAt).toLocaleString('zh-CN')}</small></button><button className="claude-delete-session" onClick={()=>setDeleteTarget(item)} aria-label={`删除 ${item.title}`}>×</button></div>)}</div>
       </nav>
       <section className="claude-conversation">
+        {assistantError&&<div className="claude-inline-error" role="alert"><span>{assistantError}</span><button onClick={()=>setAssistantError('')} aria-label="关闭错误提示">×</button></div>}
         {initializing?<div className="claude-empty">正在读取本机历史…</div>:active?<>
           <input className="claude-session-title" value={titleDraft} onChange={event=>setTitleDraft(event.target.value)} onBlur={()=>void renameActive()} onKeyDown={event=>{if(event.key==='Enter')event.currentTarget.blur()}} aria-label="会话标题"/>
           <div className="claude-messages">{active.messages.length?active.messages.map(message=><ClaudeMessage key={message.id} message={message} onOpenSql={onOpenSql} onNotify={onNotify}/>):<div className="claude-empty"><b>开始一段本地对话</b><span>默认不会附带 SQL、错误或 Schema。</span></div>}</div>

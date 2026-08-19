@@ -41,6 +41,12 @@ test('drawer exposes chat history, explicit context, diagnosis, cancellation, an
   assert.match(source,/loadSession\(resolvedSessionId\)/)
   assert.match(source,/Claude CLI 路径/)
   assert.match(source,/调整 Claude 助手宽度/)
+  assert.match(source,/role="alert"/)
+  assert.match(source,/setPointerCapture/)
+  assert.match(source,/onPointerMove/)
+  assert.match(source,/onPointerUp/)
+  const css=await readFile(new URL('./claude-assistant.css',import.meta.url),'utf8')
+  assert.match(css,/\.claude-assistant-drawer\{position:fixed;z-index:87/)
 })
 
 test('runtime web source contains no obsolete Agent workbench implementation',async()=>{

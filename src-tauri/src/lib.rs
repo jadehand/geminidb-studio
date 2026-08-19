@@ -204,6 +204,19 @@ fn delete_credential(id: String) -> Result<(), String> {
     }
 }
 
+fn resolve_export_directory(app: &tauri::AppHandle, directory: &str) -> Result<std::path::PathBuf, String> {
+    Ok(if directory.trim().is_empty() {
+        app.path().download_dir().map_err(|error| format!("无法读取系统下载目录：{error}"))?
+    } else {
+        std::path::PathBuf::from(directory)
+    })
+}
+
+#[tauri::command]
+fn current_export_directory(app: tauri::AppHandle, directory: String) -> Result<String, String> {
+    Ok(resolve_export_directory(&app, &directory)?.to_string_lossy().into_owned())
+}
+
 #[tauri::command]
 fn export_result_file(
     app: tauri::AppHandle,
@@ -219,11 +232,7 @@ fn export_result_file(
     if !matches!(extension, "csv" | "xls" | "json") {
         return Err("仅支持导出 CSV、Excel 或 JSON".into());
     }
-    let folder = if directory.trim().is_empty() {
-        app.path().download_dir().map_err(|error| format!("无法读取系统下载目录：{error}"))?
-    } else {
-        std::path::PathBuf::from(directory)
-    };
+    let folder = resolve_export_directory(&app, &directory)?;
     if !folder.is_dir() {
         return Err("导出目录不存在或不可访问".into());
     }
@@ -249,6 +258,7 @@ pub fn run() {
             save_credential,
             load_credential,
             delete_credential,
+            current_export_directory,
             export_result_file,
             bridge_status,
             restart_bridge,

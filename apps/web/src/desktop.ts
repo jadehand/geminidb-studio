@@ -24,6 +24,11 @@ export async function chooseExportDirectory() {
   return typeof selected === 'string' ? selected : null
 }
 
+export async function currentExportDirectory(directory: string) {
+  if (!isTauri()) return directory
+  return invoke<string>('current_export_directory', { directory })
+}
+
 export async function writeExportFile(directory: string, filename: string, content: string) {
   if (!isTauri()) return null
   return invoke<string>('export_result_file', { directory, filename, content })
