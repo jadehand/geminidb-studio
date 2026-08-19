@@ -145,11 +145,26 @@ claude auth status
 
 ### Web 开发模式
 
-```bash
+首次启动或依赖发生变化时，在 PowerShell 中进入包含 `package.json` 的源码根目录：
+
+```powershell
+Set-Location "你的源码目录\geminidb-studio"
 npm install
+```
+
+然后打开两个 PowerShell 窗口，分别启动 Bridge 和 Web：
+
+```powershell
+# 窗口一：启动本地 Bridge
 npm run dev:bridge
+```
+
+```powershell
+# 窗口二：启动 Web
 npm run dev:web
 ```
+
+浏览器访问 `http://127.0.0.1:8791`。关闭时，在两个 PowerShell 窗口中分别按 `Ctrl + C`；如果询问是否终止批处理操作，输入 `Y`。
 
 - Web：`http://127.0.0.1:8791`
 - Bridge：`http://127.0.0.1:8790`
@@ -163,7 +178,7 @@ npm install
 npm run desktop
 ```
 
-该命令会启动本地 Bridge 和 Vite，然后打开桌面窗口。生产构建会使用 `@yao-pkg/pkg` 将 Bridge 与 Node.js 22 Runtime 封装为 sidecar，最终用户无需单独安装 Node.js。
+该命令会启动本地 Bridge 和 Vite，然后打开桌面窗口。关闭桌面窗口后，如果启动命令仍在运行，请回到 PowerShell 按 `Ctrl + C`。生产构建会使用 `@yao-pkg/pkg` 将 Bridge 与 Node.js 22 Runtime 封装为 sidecar，最终用户无需单独安装 Node.js。
 
 ```bash
 npm run desktop:info
