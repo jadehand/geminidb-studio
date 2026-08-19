@@ -120,6 +120,14 @@
 :root[data-theme="dark"] .result-tabs{color:#aab6c5;background:#171d25}
 :root[data-theme="dark"] .result-tabs button{background:transparent}
 :root[data-theme="dark"] .result-tabs>div:first-child button.active{color:#8fbdff;border-bottom-color:#5795eb}
+:root[data-theme="dark"] .action-menu>div{
+  color:#d4dde8;
+  background:#202833;
+  border-color:#465262;
+  box-shadow:0 12px 32px #080c1166;
+}
+:root[data-theme="dark"] .action-menu>div button{color:#d4dde8;background:transparent}
+:root[data-theme="dark"] .action-menu>div button:hover{background:#2b3542}
 :root[data-theme="dark"] .result-body,
 :root[data-theme="dark"] .grid-scroll{background:#171d25}
 :root[data-theme="dark"] .grid-scroll th.pinned{background:#222a34}
