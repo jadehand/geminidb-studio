@@ -1,0 +1,4 @@
+.result-tabs>div:first-child button.favorites-tab{color:#9b6a19}
+.result-tabs>div:first-child button.favorites-tab.active{color:#b77816;border-bottom-color:#d99a32}
+.completion-help button.completion-off{color:#89939f}
+.chart-placeholder{height:100%;display:grid;place-items:center;text-align:center;color:#65717f}.chart-placeholder>div{max-width:390px}.chart-placeholder span{display:block;font:42px ui-monospace;color:#9fb1c8}.chart-placeholder b{display:block;font-size:14px}.chart-placeholder p{font-size:11px;margin:8px 0}.chart-placeholder small{color:#909aa6}

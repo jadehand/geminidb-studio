@@ -97,3 +97,20 @@ test('app gives an active measurement data tab the full main workspace', async (
   assert.match(source, /MeasurementDataView/)
   assert.match(source, /activeMeasurementDataTab/)
 })
+
+test('result grid zoom scales headers, cells, geometry, and keeps controls with table tools', async () => {
+  const [source, measurementCss, resultCss] = await Promise.all([
+    readFile(new URL('./MeasurementDataView.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('./measurement-data-view.css', import.meta.url), 'utf8'),
+    readFile(new URL('./data-grid.css', import.meta.url), 'utf8'),
+  ])
+
+  assert.match(source, /<div className="measurement-data-toolbar">[\s\S]*?<ResultGridZoomControls/)
+  assert.match(measurementCss, /\.measurement-data-scroll th\{[^}]*font-size:calc\(10px \* var\(--grid-zoom\)\)/)
+  assert.match(measurementCss, /\.measurement-data-scroll th,[^}]*\.measurement-data-scroll td\{[^}]*padding:calc\(9px \* var\(--grid-zoom\)\) calc\(12px \* var\(--grid-zoom\)\)/)
+  assert.match(measurementCss, /\.measurement-data-scroll thead tr:nth-child\(2\) th\{top:calc\(35px \* var\(--grid-zoom\)\)\}/)
+  assert.match(measurementCss, /\.measurement-column-head\{[^}]*min-width:calc\(120px \* var\(--grid-zoom\)\)!important/)
+  assert.match(resultCss, /\.grid-scroll th\{[^}]*font-size:calc\(10px \* var\(--grid-zoom\)\)/)
+  assert.match(resultCss, /\.grid-scroll th,[^}]*\.grid-scroll td\{[^}]*padding:calc\(9px \* var\(--grid-zoom\)\) calc\(12px \* var\(--grid-zoom\)\)/)
+  assert.match(resultCss, /\.grid-scroll th\{[^}]*min-width:calc\(130px \* var\(--grid-zoom\)\)/)
+})

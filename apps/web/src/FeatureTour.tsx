@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useState } from 'react'
-import type { TourStep } from './onboarding'
+import type { TourStep } from './learning-center'
 
 type Box = { top: number; left: number; width: number; height: number }
 
 type Props = {
+  topicTitle?: string
   steps: TourStep[]
   onComplete: () => void
   onSkip: () => void
@@ -33,7 +34,7 @@ function cardPosition(box: Box) {
   }
 }
 
-export default function FeatureTour({ steps, onComplete, onSkip }: Props) {
+export default function FeatureTour({ topicTitle, steps, onComplete, onSkip }: Props) {
   const [index, setIndex] = useState(0)
   const [box, setBox] = useState<Box | null>(null)
   const step = steps[index]
@@ -64,14 +65,13 @@ export default function FeatureTour({ steps, onComplete, onSkip }: Props) {
     return () => window.removeEventListener('keydown', keyboard)
   }, [index, onComplete, onSkip, steps.length])
 
-  if (!box) return null
-  const position = cardPosition(box)
+  const position = box ? cardPosition(box) : {top:Math.max(12,window.innerHeight/2-CARD_HEIGHT/2),left:Math.max(12,window.innerWidth/2-CARD_WIDTH/2)}
 
   return <div className="feature-tour" role="dialog" aria-modal="true" aria-labelledby="feature-tour-title">
     <div className="feature-tour-shade"/>
-    <div className="feature-tour-focus" style={{ top:box.top - 5, left:box.left - 5, width:box.width + 10, height:box.height + 10 }}/>
+    {box&&<div className="feature-tour-focus" style={{ top:box.top - 5, left:box.left - 5, width:box.width + 10, height:box.height + 10 }}/>}
     <section className="feature-tour-card" style={position}>
-      <div className="feature-tour-progress"><span>{index + 1} / {steps.length}</span><button type="button" onClick={onSkip}>跳过</button></div>
+      <div className="feature-tour-progress"><span>{topicTitle&&`${topicTitle} · `}{index + 1} / {steps.length}</span><button type="button" onClick={onSkip}>跳过</button></div>
       <h2 id="feature-tour-title">{step.title}</h2>
       <p>{step.description}</p>
       <div className="feature-tour-actions">

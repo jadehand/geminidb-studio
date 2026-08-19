@@ -1,9 +1,48 @@
 use serde::Serialize;
-use std::{fs::OpenOptions, io::Write, sync::Mutex};
+use std::{fs::OpenOptions, io::Write, path::{Component, Path, PathBuf}, sync::Mutex, time::UNIX_EPOCH};
 use tauri::{Manager, RunEvent};
 use tauri_plugin_shell::{process::{CommandChild, CommandEvent}, ShellExt};
 
 const CREDENTIAL_SERVICE: &str = "cn.loomi.geminidb-studio";
+const MAX_NOTE_BYTES: u64 = 1_048_576;
+const MAX_NOTE_COUNT: usize = 500;
+
+#[derive(Default)]
+struct NotesRoot(Mutex<Option<PathBuf>>);
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NoteDocument { path: String, content: String, modified_ms: u64 }
+
+fn note_relative_path(value: &str) -> Result<PathBuf, String> {
+    let path=Path::new(value);
+    if path.as_os_str().is_empty() || path.is_absolute() || path.components().any(|part| !matches!(part, Component::Normal(_))) { return Err("笔记路径无效".into()) }
+    if !path.extension().and_then(|value|value.to_str()).is_some_and(|value|value.eq_ignore_ascii_case("md")) { return Err("仅支持 Markdown 文件".into()) }
+    Ok(path.to_path_buf())
+}
+
+fn notes_root(app:&tauri::AppHandle)->Result<PathBuf,String>{app.state::<NotesRoot>().0.lock().unwrap().clone().ok_or_else(||"尚未授权个人笔记目录".into())}
+fn contained_note(root:&Path, relative:&str, must_exist:bool)->Result<PathBuf,String>{
+    let relative=note_relative_path(relative)?;let target=root.join(relative);
+    if must_exist { let metadata=std::fs::symlink_metadata(&target).map_err(|_|"笔记不存在".to_string())?;if metadata.file_type().is_symlink(){return Err("不允许访问符号链接笔记".into())}let canonical=target.canonicalize().map_err(|e|e.to_string())?;if !canonical.starts_with(root){return Err("笔记路径超出授权目录".into())}Ok(canonical) }
+    else { let parent=target.parent().ok_or_else(||"笔记路径无效".to_string())?.canonicalize().map_err(|_|"笔记目录不存在".to_string())?;if !parent.starts_with(root){return Err("笔记路径超出授权目录".into())}Ok(target) }
+}
+
+#[tauri::command]
+fn authorize_notes_directory(app:tauri::AppHandle,directory:String)->Result<String,String>{let root=PathBuf::from(directory).canonicalize().map_err(|_|"笔记目录不存在或不可访问".to_string())?;if !root.is_dir(){return Err("请选择一个目录".into())}*app.state::<NotesRoot>().0.lock().unwrap()=Some(root.clone());Ok(root.to_string_lossy().into_owned())}
+
+fn collect_notes(root:&Path,folder:&Path,notes:&mut Vec<NoteDocument>,depth:u8)->Result<(),String>{
+    if notes.len()>=MAX_NOTE_COUNT || depth>12{return Ok(())}for entry in std::fs::read_dir(folder).map_err(|e|format!("读取笔记目录失败：{e}"))?{let entry=entry.map_err(|e|e.to_string())?;let metadata=entry.file_type().map_err(|e|e.to_string())?;if metadata.is_symlink(){continue}let path=entry.path();if metadata.is_dir(){collect_notes(root,&path,notes,depth+1)?}else if path.extension().and_then(|v|v.to_str()).is_some_and(|v|v.eq_ignore_ascii_case("md")){let size=entry.metadata().map_err(|e|e.to_string())?.len();if size>MAX_NOTE_BYTES{continue}let content=std::fs::read_to_string(&path).map_err(|e|format!("读取笔记失败：{e}"))?;let modified_ms=entry.metadata().ok().and_then(|m|m.modified().ok()).and_then(|t|t.duration_since(UNIX_EPOCH).ok()).map(|v|v.as_millis() as u64).unwrap_or_default();let relative=path.strip_prefix(root).map_err(|_|"笔记路径超出授权目录".to_string())?.to_string_lossy().replace('\\',"/");notes.push(NoteDocument{path:relative,content,modified_ms});if notes.len()>=MAX_NOTE_COUNT{return Ok(())}}}Ok(())
+}
+
+#[tauri::command]
+fn list_notes(app:tauri::AppHandle)->Result<Vec<NoteDocument>,String>{let root=notes_root(&app)?;let mut notes=Vec::new();collect_notes(&root,&root,&mut notes,0)?;notes.sort_by(|a,b|b.modified_ms.cmp(&a.modified_ms));Ok(notes)}
+#[tauri::command]
+fn write_note(app:tauri::AppHandle,path:String,content:String)->Result<String,String>{if content.len() as u64>MAX_NOTE_BYTES{return Err("单篇笔记不能超过 1 MB".into())}let root=notes_root(&app)?;let target=contained_note(&root,&path,root.join(&path).exists())?;std::fs::write(&target,content).map_err(|e|format!("保存笔记失败：{e}"))?;Ok(path)}
+#[tauri::command]
+fn rename_note(app:tauri::AppHandle,path:String,new_name:String)->Result<String,String>{if Path::new(&new_name).file_name().and_then(|v|v.to_str())!=Some(new_name.as_str()){return Err("新笔记名称无效".into())}note_relative_path(&new_name)?;let root=notes_root(&app)?;let source=contained_note(&root,&path,true)?;let target=source.parent().unwrap().join(&new_name);if target.exists(){return Err("同名笔记已存在".into())}std::fs::rename(&source,&target).map_err(|e|format!("重命名失败：{e}"))?;Ok(target.strip_prefix(&root).map_err(|_|"笔记路径超出授权目录".to_string())?.to_string_lossy().replace('\\',"/"))}
+#[tauri::command]
+fn delete_note(app:tauri::AppHandle,path:String)->Result<(),String>{let root=notes_root(&app)?;let target=contained_note(&root,&path,true)?;std::fs::remove_file(target).map_err(|e|format!("删除笔记失败：{e}"))}
 
 #[derive(Default)]
 struct BridgeProcess {
@@ -51,11 +90,20 @@ fn start_bridge(app: &tauri::AppHandle) -> Result<(), String> {
         return Ok(());
     }
 
+    let data_dir = app.path().app_data_dir()
+        .map_err(|error| format!("无法获取 GeminiDB Studio 数据目录：{error}"))?;
+    std::fs::create_dir_all(&data_dir)
+        .map_err(|error| format!("无法创建 GeminiDB Studio 数据目录：{error}"))?;
+    let parent_pid = std::process::id().to_string();
+    let data_dir = data_dir
+        .to_str()
+        .ok_or_else(|| "GeminiDB Studio 数据目录不是有效的 UTF-8 路径，无法启动 Bridge".to_string())?
+        .to_string();
     let (mut events, child) = app
         .shell()
         .sidecar("geminidb-bridge")
         .map_err(|error| format!("找不到 GeminiDB Bridge：{error}"))?
-        .args(["--parent-pid", &std::process::id().to_string()])
+        .args(["--parent-pid", &parent_pid, "--data-dir", &data_dir])
         .spawn()
         .map_err(|error| format!("无法启动 GeminiDB Bridge：{error}"))?;
 
@@ -188,6 +236,7 @@ fn export_result_file(
 pub fn run() {
     let app = tauri::Builder::default()
         .manage(BridgeProcess::default())
+        .manage(NotesRoot::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
@@ -203,7 +252,12 @@ pub fn run() {
             export_result_file,
             bridge_status,
             restart_bridge,
-            exit_app
+            exit_app,
+            authorize_notes_directory,
+            list_notes,
+            write_note,
+            rename_note,
+            delete_note
         ])
         .build(tauri::generate_context!())
         .expect("GeminiDB Studio desktop client failed to start");

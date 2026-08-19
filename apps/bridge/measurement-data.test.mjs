@@ -9,6 +9,13 @@ test('builds a latest-page query with one extra row', () => {
   )
 })
 
+test('builds bounded chunks with a per-series offset', () => {
+  assert.equal(
+    buildMeasurementDataQuery({ measurement:'cpu', limit:100, offset:0, queryLimit:50, queryOffset:50, startNs:null, endNs:null }),
+    'SELECT * FROM "cpu" ORDER BY time DESC LIMIT 50 OFFSET 50',
+  )
+})
+
 test('adds exact nanosecond bounds to a custom range query', () => {
   assert.equal(
     buildMeasurementDataQuery({

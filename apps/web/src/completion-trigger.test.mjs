@@ -11,9 +11,12 @@ test('自动补全监听当前 Monaco 支持的真实键盘事件',()=>{
   assert.match(source,/shouldAutoSuggest\(beforeCursor,text\)/)
 })
 
-test('自动、按钮和快捷键统一触发 Monaco Suggest',()=>{
+test('自动补全由默认开启的开关控制，移除 Ctrl+Space 提示',()=>{
   assert.match(source,/editor\.trigger\('geminidb-studio','editor\.action\.triggerSuggest',\{\}\)/)
   assert.doesNotMatch(source,/getAction\('editor\.action\.triggerSuggest'\)/)
-  assert.match(source,/monaco\.KeyMod\.CtrlCmd \| monaco\.KeyCode\.Space/)
-  assert.match(source,/>显示补全<\/button>/)
+  assert.doesNotMatch(source,/KeyCode\.Space/)
+  assert.match(source,/completionEnabled:boolean/)
+  assert.match(source,/completionEnabledRef\.current/)
+  assert.match(source,/hideSuggestWidget/)
+  assert.match(source,/completionEnabled\?'补全：开':'补全：关'/)
 })

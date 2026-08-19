@@ -3,6 +3,8 @@ dist
 .DS_Store
 *.log
 *.tsbuildinfo
+__pycache__/
+*.py[cod]
 src-tauri/target
 src-tauri/binaries/*
 .worktrees/

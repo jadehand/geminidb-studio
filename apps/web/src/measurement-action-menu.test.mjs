@@ -31,5 +31,8 @@ test('measurement action menu has coordinated dark theme surfaces', async () => 
   assert.match(css, /:root\[data-theme="dark"\] \.measurement-action-menu \{/)
   assert.match(css, /background: #202833/)
   assert.match(css, /border-color: #3d4856/)
+  assert.match(css, /color-scheme: dark/)
+  assert.match(css, /outline: none/)
   assert.match(css, /:root\[data-theme="dark"\] \.measurement-action-menu button:hover/)
+  assert.match(css, /:root\[data-theme="dark"\] \.measurement-action-menu button:focus-visible[^{]*\{[^}]*box-shadow: inset 0 0 0 2px #5f8fc9/)
 })

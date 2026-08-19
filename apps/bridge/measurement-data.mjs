@@ -36,17 +36,18 @@ function nanoseconds(value, name) {
   return BigInt(value)
 }
 
-export function buildMeasurementDataQuery({ measurement, limit, offset, startNs, endNs }) {
+export function buildMeasurementDataQuery({ measurement, limit, offset, startNs, endNs, queryLimit = null, queryOffset = 0 }) {
   const name = measurementIdentifier(measurement)
   const pageSize = pageLimit(limit)
   const pageStart = pageOffset(offset)
-  const perSeriesLimit = fetchLimit(pageStart, pageSize)
-  if (startNs === null && endNs === null) return `SELECT * FROM ${quoteIdentifier(name)} ORDER BY time DESC LIMIT ${perSeriesLimit} OFFSET 0`
+  const perSeriesLimit = queryLimit === null ? fetchLimit(pageStart, pageSize) : resultLimit(queryLimit)
+  const perSeriesOffset = pageOffset(queryOffset)
+  if (startNs === null && endNs === null) return `SELECT * FROM ${quoteIdentifier(name)} ORDER BY time DESC LIMIT ${perSeriesLimit} OFFSET ${perSeriesOffset}`
   if (startNs === null || endNs === null) throw new RangeError('startNs and endNs must be supplied together')
   const start = nanoseconds(startNs, 'startNs')
   const end = nanoseconds(endNs, 'endNs')
   if (start > end) throw new RangeError('startNs must be less than or equal to endNs')
-  return `SELECT * FROM ${quoteIdentifier(name)} WHERE time >= ${startNs}ns AND time <= ${endNs}ns ORDER BY time DESC LIMIT ${perSeriesLimit} OFFSET 0`
+  return `SELECT * FROM ${quoteIdentifier(name)} WHERE time >= ${startNs}ns AND time <= ${endNs}ns ORDER BY time DESC LIMIT ${perSeriesLimit} OFFSET ${perSeriesOffset}`
 }
 
 function parameterOnce(searchParams, name, { required = false, defaultValue = null } = {}) {

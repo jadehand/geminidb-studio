@@ -29,6 +29,14 @@ export async function writeExportFile(directory: string, filename: string, conte
   return invoke<string>('export_result_file', { directory, filename, content })
 }
 
+export type DesktopNote={path:string;content:string;modifiedMs:number}
+export async function chooseNotesDirectory(){if(!isTauri())return null;const selected=await open({directory:true,multiple:false,title:'选择个人笔记 Markdown 目录'});return typeof selected==='string'?selected:null}
+export async function authorizeNotesDirectory(directory:string){return isTauri()?invoke<string>('authorize_notes_directory',{directory}):null}
+export async function listNotes(){return isTauri()?invoke<DesktopNote[]>('list_notes'):[]}
+export async function writeNote(path:string,content:string){return isTauri()?invoke<string>('write_note',{path,content}):null}
+export async function renameNote(path:string,newName:string){return isTauri()?invoke<string>('rename_note',{path,newName}):null}
+export async function deleteNote(path:string){if(isTauri())await invoke('delete_note',{path})}
+
 export async function registerDesktopCloseGuard(shouldGuard:() => boolean, onGuardedClose:() => void) {
   if (!isTauri()) return () => {}
   return getCurrentWindow().onCloseRequested(event => {

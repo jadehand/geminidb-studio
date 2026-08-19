@@ -1,8 +1,149 @@
-# GeminiDB Studio MVP
+# GeminiDB Studio v0.7.1
 
-本地 GeminiDB 可视化查询工作台，通过 Bridge 连接真实 GeminiDB Influx（InfluxDB 1.x HTTP API）实例。
+GeminiDB Studio 是一个面向 GeminiDB Influx 的本地桌面数据库客户端，提供连接管理、InfluxQL 查询、数据浏览与编辑、批量造数、结果导出和本地 Claude 辅助诊断。
 
-## 启动
+## 核心能力
+
+- **连接数据库**：管理多个 GeminiDB Influx 连接，区分开发、测试和生产环境。
+- **浏览数据目录**：按 Database、Measurement 前缀和具体天表浏览数据结构。
+- **查询与分析**：使用带补全和语法提示的 Monaco 编辑器执行 InfluxQL。
+- **查看与修改数据**：分页查看 Measurement 数据，并在线修改可写的 Field。
+- **写入与造数**：在非生产环境执行 Line Protocol 写入和批量生成测试数据。
+- **导出结果**：将查询结果复制或导出为 CSV、Excel、JSON。
+- **Claude 辅助**：通过本机 Claude CLI 进行普通聊天和 SQL 诊断。
+- **本地工具**：提供查询历史、收藏、个人笔记、知识库、学习中心和时间戳转换。
+
+## 核心使用流程
+
+### 1. 管理连接
+
+- 保存和管理多个 GeminiDB Influx 连接，支持自动登录。
+- 支持 HTTP/HTTPS、负载均衡地址和自签名证书测试模式。
+- 连接可以标记为开发、测试或生产环境；生产环境默认只读，也可以手动将其他连接设为只读。
+- 删除连接时使用应用内确认弹窗展示连接名称和地址，取消按钮为默认焦点，并支持 `Esc` 取消。
+
+### 2. 浏览 Database 与 Measurement
+
+- 切换 Database，并按 Measurement 前缀和具体天表分级展示目录。
+- 支持目录展开、折叠和刷新。
+- 自动读取 Field Key、字段类型、Tag Key、Tag Value 和 Retention Policy。
+- 选择具体 Measurement 后可以：
+  - 查看数据
+  - 新建查询
+  - 查看 Schema
+
+### 3. 查询与查看数据
+
+- 查看 Measurement 数据时默认按时间倒序加载最新 50 条。
+- 支持切换时间范围、每页数量和分页。
+- 支持搜索结果、列排序、调整列宽和缩放表格。
+- 横向滚动时固定时间列及其列头，缺失的 Field 保持空白显示。
+- 普通查询结果、聚合结果和表达式结果保持只读。
+
+### 4. 编辑、写入与导出
+
+- 仅在“查看数据”页面支持在线编辑：双击 Field 单元格修改已有值或补充缺失值，再通过顶部提交按钮统一写入。
+- 时间和 Tag 不可编辑；GeminiDB Influx 不支持单独删除一个 Field。
+- 开发和测试环境支持单条 Line Protocol 写入，生产或只读连接禁止写入。
+- 支持复制查询结果，以及导出 CSV、Excel、JSON；桌面版可以选择导出目录。
+
+## 查询编辑器
+
+- 基于 Monaco Editor，提供 InfluxQL 语法高亮。
+- 支持关键字、函数、Measurement、Field 和 Tag 自动补全。
+- 提示常见 MySQL 语法误用；GeminiDB Influx 不支持传统的 `INSERT INTO ... VALUES ...`。
+- 支持多查询页签、双击重命名和草稿自动保存。
+- 使用 `Ctrl/Cmd + Enter` 执行选区或全文，运行中可以手动取消。
+- 支持查询历史、执行消息和收藏。
+
+Line Protocol 写入示例：
+
+```text
+WRITE cpu,host=node-01 usage=37.82 1784649600000000000
+```
+
+写入前会确认目标 Database 和完整 Line Protocol，不支持多语句脚本和事务。
+
+开发和测试环境支持受控查询、Line Protocol 写入与批量造数；生产环境保持只读。
+
+## 扩展能力
+
+### 批量造数
+
+批量造数仅在开发或测试实例开放，用于生成可控的时序测试数据：
+
+1. 选择 Database、Retention Policy、Measurement 前缀和基准 Schema。
+2. 选择最多 30 个日期，并配置每日时间范围和采样间隔。
+3. 配置 Tag、整数、浮点、布尔、字符串生成器及字段约束。
+4. 预览目标天表、点数、序列数、样本数据和 Line Protocol，确认风险后执行。
+
+执行规则：
+
+- 单次最多生成 100,000 个点和 10,000 个序列，最小采样间隔为 1 秒。
+- 数据按 1,000 行分批写入，每个日期最多同时发送 2 批。
+- 支持进度显示、取消、失败重试和从失败批次继续。
+- 草稿与最近 20 条任务历史保存在本机；应用重启后不能恢复未完成任务。
+- 写入已有目标时，相同时间戳、Tag 和 Field 组合可能覆盖已有值，因此需要额外确认。
+
+### 本地 Claude 助手
+
+- 只调用本机 Claude CLI，不提供远程模型回退、自动化工具或数据库执行能力。
+- 支持普通聊天，也可以诊断当前 SQL、最近错误和 Schema。
+- 普通聊天默认不携带数据库上下文，SQL、错误和 Schema 必须由用户主动选择。
+- Claude 生成的 InfluxQL 只能复制或打开到新查询页签，不会自动执行 SQL，也不会修改数据库。
+- 支持停止生成、失败重试，以及本地会话的搜索、重命名和删除。
+- 数据库密码、Token 和连接凭据不会写入聊天历史，也不会发送给 Claude。
+
+本机需要安装并登录 Claude Code：
+
+```bash
+claude --version
+claude auth status
+```
+
+默认执行命令为 `claude`。如果它不在 `PATH` 中，可以在启动 Bridge 前通过 `GEMINIDB_CLAUDE_CLI` 指定完整路径。
+
+### 个人工具
+
+- Markdown 个人笔记与本地笔记目录。
+- 知识库和学习中心。
+- 北京时间与 Unix 时间戳转换。
+- 深色界面、新手引导和本地偏好保存。
+
+## 安全边界
+
+- Bridge 只监听 `127.0.0.1`，前端不直接连接数据库。
+- Tauri 只允许启动和终止声明过的 Bridge sidecar，不开放任意 Shell 命令。
+- Bridge 登录会话中的数据库认证信息只保存在内存中，Bridge 重启后失效。
+- 桌面版密码使用系统 Keyring；浏览器开发模式仅使用当前页面会话的 `sessionStorage`。
+- 前端和 Bridge 都会阻止生产或只读连接执行写入。
+- `SELECT` 必须包含时间范围，以避免无界扫描；前端查询超过 30 秒会自动取消。
+- Claude 没有数据库工具，不能自动查询、写入或批量造数。
+- “忽略 TLS 证书校验”只应在自签名证书测试环境中使用。
+
+## 架构与技术栈
+
+```text
+用户
+ ├─ React + TypeScript：界面、查询编辑器、结果表格和交互状态
+ ├─ Tauri + Rust：桌面窗口、系统凭据、文件操作和 Bridge 生命周期
+ └─ Node.js Bridge：本地业务后端，负责查询、写入、安全校验和 Claude 调用
+       ├─ GeminiDB Influx：远程时序数据库
+       └─ Claude CLI：本机聊天与 SQL 诊断
+```
+
+| 层级 | 技术 | 职责 |
+| --- | --- | --- |
+| Web 前端 | React、TypeScript、Vite、Monaco Editor | 页面、编辑器、结果表格和交互状态 |
+| 本地业务后端 | Node.js ESM Bridge | 数据库连接、查询、写入、Schema、批量任务和 Claude 调用 |
+| 桌面原生层 | Tauri v2、Rust | 窗口、文件、系统 Keyring 和 Bridge sidecar 生命周期 |
+| 远程数据层 | GeminiDB Influx | InfluxQL 查询和 Line Protocol 时序数据存储 |
+
+前端通过本机 HTTP 调用 Bridge，通过 Tauri 命令使用系统能力。数据库访问统一经过 Bridge，Claude 也不会直接操作数据库。
+
+## 本地启动
+
+### Web 开发模式
 
 ```bash
 npm install
@@ -10,188 +151,57 @@ npm run dev:bridge
 npm run dev:web
 ```
 
-- Web：http://127.0.0.1:8791
-- Bridge：http://127.0.0.1:8790
+- Web：`http://127.0.0.1:8791`
+- Bridge：`http://127.0.0.1:8790`
 
-两个服务均不会使用 `127.0.0.1:8080`。
+### Tauri 桌面模式
 
-## 桌面客户端（Tauri v2）
-
-项目已包含 `src-tauri/` 桌面外壳。安装 Tauri 对应平台的系统依赖和 Rust stable 后运行：
+安装 Tauri 对应平台的系统依赖和 Rust stable 后运行：
 
 ```bash
 npm install
 npm run desktop
 ```
 
-该命令会自动启动本地 Bridge（`8790`）和 Vite（`8791`），随后打开 GeminiDB Studio 桌面窗口。查看环境诊断：
+该命令会启动本地 Bridge 和 Vite，然后打开桌面窗口。生产构建会使用 `@yao-pkg/pkg` 将 Bridge 与 Node.js 22 Runtime 封装为 sidecar，最终用户无需单独安装 Node.js。
 
 ```bash
 npm run desktop:info
+npm run build:sidecar
+npm run desktop:build
 ```
 
-Node Bridge 已接入 Tauri sidecar：生产构建会先运行 `npm run build:sidecar`，将 Bridge 和 Node 22 Runtime 封装为当前平台的独立二进制，再随客户端一起打包。客户端启动后会自动拉起 sidecar、等待健康检查，并在窗口退出时终止它，最终用户不需要安装 Node.js。
+sidecar 支持 Windows、macOS、Linux 的 x64/arm64 目标命名和映射；安装包需要在对应目标系统上构建，并按发布要求配置平台签名。
 
-```bash
-npm run build:sidecar  # 只构建当前平台 Bridge sidecar
-npm run desktop:build # 构建当前平台安装包
-```
+## 连接 GeminiDB Influx
 
-sidecar 构建脚本支持 Windows、macOS、Linux 的 x64/arm64 命名和目标映射。安装包仍需在对应目标系统上构建并完成平台签名；本宿主机缺少 Rust/Cargo 和 WebKit2GTK，因此本次只完成并实测了 Linux x64 sidecar，没有伪造未编译的 `.msi/.dmg`。
+1. 启动 Bridge 和 Web，打开“管理连接”。
+2. 连接模式选择“GeminiDB Influx”。
+3. 实例地址填写 `https://<负载均衡地址>:8635`；未启用 SSL 时使用 `http://`。
+4. 输入实例实际配置的数据库用户名和密码。
+5. 仅在自签名证书测试环境中启用“忽略 TLS 证书校验”。
 
-## Windows 安装包
+Bridge 登录时通过 `SHOW DATABASES` 验证连接，并使用 InfluxDB 1.x HTTP API 执行后续查询与写入。
 
-仓库内置 `.github/workflows/build-windows.yml`，无需在本机安装 Rust：
-
-1. 将源码推送到 GitHub 仓库。
-2. 打开 **Actions → Build Windows installers → Run workflow**。
-3. 构建成功后，在该次运行页底部的 **Artifacts** 下载：
-   - `geminidb-studio-windows-x64-msi`
-   - `geminidb-studio-windows-x64-nsis`
-
-MSI 适合企业管理和批量部署；NSIS 产物是普通用户双击安装的 `setup.exe`。未配置代码签名证书时，Windows 可能显示 SmartScreen 未知发布者提示，但不影响内部测试安装。
-
-## 验证
+## 验证与发布
 
 ```bash
 npm run check
 npm run build
+npm run test:web
 npm run test:bridge
 npm run desktop:info
 curl http://127.0.0.1:8790/health
 ```
 
-## 连接真实 GeminiDB Influx
+仓库内置 `.github/workflows/build-windows.yml`：
 
-1. 启动 Bridge 和 Web。
-2. 打开“管理连接”。
-3. 连接模式选择“GeminiDB Influx”。
-4. 实例地址填写 `https://<负载均衡地址>:8635`；未启用 SSL 时使用 `http://`。
-5. 输入该实例实际配置的数据库用户名和密码；客户端不会预填或猜测账号。
-6. 仅在自签名证书测试环境中启用“忽略 TLS 证书校验”。
+- 在 GitHub Actions 中手动运行可以生成 MSI 和 NSIS Artifacts。
+- 推送 `v*` Tag 会自动构建 Windows x64 安装包并创建 GitHub Release。
+- 未配置代码签名证书时，Windows 可能显示 SmartScreen“未知发布者”提示。
 
-Bridge 在登录时执行 `SHOW DATABASES` 验证连接，随后使用：
+## Bridge API
 
-- `SHOW DATABASES` 加载 database。
-- `SHOW MEASUREMENTS` 加载当前 database 的 measurement。
-- `/query` 执行 InfluxQL 查询。
-- `/write` 写入 line protocol。
+Bridge 保持 `/login`、`/databases`、`/tables`、`/schema`、`/query`、`/ask`，并提供 `/retention-policies`、`/tag-values`、`/bulk-jobs/*`、`/claude/probe` 和 `/claude/sessions/*` 接口。
 
-编辑器中的写入格式：
-
-```text
-WRITE cpu,host=node-01 usage=37.82 1784649600000000000
-```
-
-支持 InfluxQL 兼容的 `INSERT` 和 `INSERT INTO`：
-
-```sql
-INSERT cpu,host=node-01 usage=37.82 1784649600000000000
-INSERT INTO rp cpu,host=node-01 usage=37.82 1784649600000000000
-```
-
-多条写入语句可以一次粘贴执行，遇错即停并准确展示成功、失败和未执行数量，不自动回滚。生产环境连接的所有写入入口被前端和 Bridge 双重阻止。
-
-## 批量造数（0.5.0）
-
-批量造数用于向 GeminiDB Influx 的测试实例生成可控的时序测试数据。先在“管理连接”中把连接环境设为“测试环境”，并确保连接不是只读模式；生产、开发或只读连接不会开放入口。
-
-向导按四步完成配置：
-
-1. 选择 Database、Retention Policy、Measurement 前缀和基准 Schema。
-2. 通过日历选择最多 30 个日期，并设置每日时间范围与采样间隔。
-3. 为 Tag 和 Field 选择生成方式，按需增加字段间或字段与固定值之间的约束。
-4. 检查目标天表、点数、序列数、样本表和 Line Protocol，完成风险确认后执行。
-
-“待创建”表示目标日期对应的天表当前不存在。执行时不单独发送建表语句：GeminiDB Influx 会在首批 Line Protocol 写入时按 Measurement 名称建立目标。选择已有目标时，写入相同时间戳、Tag 组合和 Field 可能覆盖已有 Field 值，因此必须额外确认。Retention Policy 会随每个写入请求传给 GeminiDB；请在预览页再次核对。
-
-硬限制与执行语义：
-
-- 单次最多选择 30 天、生成 100,000 个点和 10,000 个序列。
-- 最小采样间隔为 1 秒；写入按 1,000 行分批，每个日期最多同时发送 2 批。
-- 任务失败后可从失败批次继续，取消仅阻止后续批次；已成功写入的数据不会回滚。
-- 草稿和最近 20 条历史保存在本地。应用或 Bridge 重启后只显示历史，不支持恢复尚未完成的任务。
-- 运行中关闭桌面客户端会先显示确认框；停止后退出会尽量在 3 秒内结束，但已写入数据仍会保留。
-
-Bridge 新增以下接口：
-
-- `POST /bulk-jobs/preview`：校验计划并生成确定性预览。
-- `POST /bulk-jobs`：创建并执行任务。
-- `GET /bulk-jobs/active`、`GET /bulk-jobs/:id`：读取当前或指定任务状态。
-- `POST /bulk-jobs/:id/resume`：从失败批次继续。
-- `POST /bulk-jobs/:id/cancel`：取消后续写入。
-
-## Measurement 数据视图与在线编辑（0.6.0）
-
-在数据目录中单击或右键具体天表 Measurement，可选择"查看数据"打开独立的数据页签。数据页签与查询页签在工作区共存：
-
-- 默认展示全天最新 50 个数据点，按 `time DESC` 排序。
-- 支持全天或自定义时段过滤，自定义时段限定在天表对应日期内。
-- 分页支持 50/100/200/500 每页，使用服务端分页。
-- 列按 Time → Tags → Fields 分组展示，缺失 Field 显示为空白单元格而非 `NULL`。
-- 纳秒时间戳以字符串保存，避免 JavaScript 大整数精度丢失。
-- 时间列支持三种显示模式：纳秒时间戳 / UTC / 北京时间，偏好持久化到本地。
-- 支持按时间、Tag 值、Field 名和值搜索筛选当前页。
-
-测试和开发环境下可在线编辑 Field 值：
-
-- 双击 Field 单元格进入编辑；Enter 接受，Escape 取消。
-- 按 Schema 类型校验 integer、float、string、boolean。
-- 同一数据点修改多个 Field 自动合并为一次写入。
-- 提交按钮显示待提交数量（`↑ 提交 N 项修改`），点击即执行，不增加确认弹窗。
-- 任意数据点写入失败后立即停止，已成功项标记提交并重新读取，失败和未执行项保留待提交状态。
-- 刷新、翻页、切换时间范围、修改每页数量、关闭页签、切换连接或 Database 前，存在未提交修改时弹出保护弹窗（提交/放弃/取消）。
-
-生产环境数据页签完全只读，Field 单元格不可编辑。
-
-Bridge 新增接口：
-
-- `GET /measurement-data`：分页读取 Measurement 原始数据点，保留完整点身份、Tag 集合和 Field 类型。
-- `POST /measurement-data/updates`：提交 Field 更新，按点身份写入，遇错即停。
-- `POST /commands`：执行 INSERT / INSERT INTO / WRITE 批量命令。
-
-## UX 改进（0.6.0）
-
-- 删除连接使用应用内确认弹窗（展示连接名称和地址），不再使用浏览器原生 `confirm`。
-- 查询结果默认字号从 10px 调整为 12px，使用清晰等宽字体。
-- `Ctrl + 滚轮` 缩放结果表格（80%–160%，10% 步进），工具栏提供 `− 100% +` 控件，缩放比例持久化。
-- 新手引导最后一步介绍批量造数入口。
-- 新增知识库面板：内置 60+ 条 GeminiDB Influx 参考条目（查询语法、Schema 探索、聚合分析、时间处理、数据管理等 12 个分类），可通过侧栏第三个工具按钮打开。
-
-## 当前能力
-
-- 常用连接与自动登录
-- database 切换与天表目录
-- database、measurements 和 measurement 前缀三级目录均可展开/收起；具体 Measurement 节点支持左键/右键操作菜单（查看数据、新建查询、查看 Schema）
-- Monaco InfluxQL 编辑器：语法高亮、关键字/函数/measurement 补全和常见 MySQL 语法提醒
-- 选择 measurement 后自动读取 Field Key、字段类型和 Tag Key，并加入编辑器补全
-- 测试/开发环境批量造数：多日期、Tag/Field 生成器、约束、预览、后台任务和历史
-- Measurement 数据视图：独立页签查看天表原始数据点，测试/开发环境可在线编辑 Field 并提交
-- 统一环境写入策略：生产强制只读，测试和开发可写，覆盖 INSERT、INSERT INTO、WRITE、批量造数和在线编辑
-- 多条 INSERT/INSERT INTO/WRITE 一次粘贴顺序执行，遇错即停
-- 多查询页签与草稿自动保存；双击页签重命名，`Ctrl/Cmd + Enter` 执行选区或全文
-- InfluxQL 查询与 line protocol 写入
-- 结果表、CSV/JSON 导出
-- 历史记录、消息与收藏
-- 北京时间/Unix 时间戳转换
-- 知识库面板：60+ 条 GeminiDB Influx 参考条目，覆盖查询、Schema、写入、聚合、排错等 12 个分类
-- 结果表格缩放：Ctrl+滚轮 80%–160%，工具栏控件，缩放比例持久化
-- 应用内连接删除确认弹窗
-- Claude Code 建议 SQL 模拟接口
-
-## 安全说明
-
-- Bridge 只监听 `127.0.0.1`。
-- Tauri 仅授予已声明的 `geminidb-bridge` sidecar 启动与终止权限，不开放任意 Shell 命令。
-- 数据库密码仅保存在 Bridge 内存会话中，Bridge 重启后失效。
-- 连接元数据保存在浏览器本地，密码只保存在当前浏览器会话的 `sessionStorage`，关闭会话后清除；生产桌面版应改用系统 Keychain。
-- 生产环境建议使用负载均衡地址和有效 SSL 证书。
-- 不建议启用“忽略 TLS 证书校验”。
-- 连接环境决定写入权限：生产环境（prod）强制只读，测试（test）和开发（dev）允许写入。前端和 Bridge 均以此为准，不再依赖旧的手动只读开关。
-- `WRITE` 执行前必须确认目标 database 和完整 line protocol。
-- `SELECT` 必须包含 `time` 范围，避免无界扫描。
-- 前端查询超过 30 秒自动取消，运行中也可以手动取消。
-
-## 生产化入口
-
-Bridge API 保持 `/login`、`/databases`、`/tables`、`/schema`、`/query`、`/ask`，并提供 `/retention-policies`、`/tag-values` 和 `/bulk-jobs/*` 批量造数接口。`/schema` 使用 `SHOW FIELD KEYS` 和 `SHOW TAG KEYS` 读取当前 measurement 结构；真实 Influx HTTP 适配器位于 `apps/bridge/influx-client.mjs`。
+`/schema` 使用 `SHOW FIELD KEYS` 和 `SHOW TAG KEYS` 读取 Measurement 结构；Influx HTTP 适配器位于 `apps/bridge/influx-client.mjs`。

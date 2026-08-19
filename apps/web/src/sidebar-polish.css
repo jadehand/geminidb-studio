@@ -182,6 +182,8 @@
   background: #202833;
   border-color: #3d4856;
   box-shadow: 0 14px 34px #080c1166, 0 2px 8px #080c114d;
+  color-scheme: dark;
+  outline: none;
 }
 
 :root[data-theme="dark"] .measurement-action-menu button {
@@ -193,6 +195,11 @@
 :root[data-theme="dark"] .measurement-action-menu button:focus-visible {
   color: #e8f1fc;
   background: #2c3745;
+}
+
+:root[data-theme="dark"] .measurement-action-menu button:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px #5f8fc9;
 }
 
 .connection-control {

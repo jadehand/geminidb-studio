@@ -1,4 +1,4 @@
-import type { ClaudeDiagnosis, ClaudeSettings, CommandBatchResponse, CommandBatchValidation, MeasurementSchema, MeasurementUpdateResult, QueryResponse } from './types'
+import type { ClaudeDiagnosis, CommandBatchResponse, CommandBatchValidation, MeasurementSchema, MeasurementUpdateResult, QueryResponse } from './types'
 import type { BulkJobStatus, BulkPlanRequest, BulkPreview } from './bulk-data.ts'
 import type { MeasurementDataOptions, MeasurementDataPage } from './measurement-data.ts'
 import type { MeasurementPointUpdate } from './measurement-editing.ts'
@@ -10,14 +10,20 @@ const apiBase = isTauri() && import.meta.env?.PROD ? 'http://127.0.0.1:8790' : '
 
 export class BridgeError extends Error { code:string;status:number;details:unknown;constructor(message:string,code:string,status:number,details?:unknown){super(message);this.code=code;this.status=status;this.details=details} }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export function currentBridgeSessionId() { return sessionId }
+export function bridgeApiBase() { return apiBase }
+
+export async function bridgeRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBase}${path}`, { ...init, headers: { 'Content-Type': 'application/json', ...(sessionId ? { Authorization: `Bearer ${sessionId}` } : {}), ...init?.headers } })
   if (!response.ok) {
     const body = await response.json().catch(() => ({ message: response.statusText }))
     throw new BridgeError(body.message || `HTTP ${response.status}`,body.code || 'HTTP_ERROR',response.status,body.details)
   }
+  if (response.status === 204) return undefined as T
   return response.json()
 }
+
+const request = bridgeRequest
 
 export const bridge = {
   login: async (connection: { mode: 'mock' | 'influx'; endpoint: string; username: string; password: string; insecureSkipVerify: boolean; readOnly: boolean; environment?: 'prod'|'test'|'dev' }) => {
@@ -46,6 +52,6 @@ export const bridge = {
   validateCommands: (script: string, signal?: AbortSignal) => request<CommandBatchValidation>('/commands/validate', { method:'POST', body:JSON.stringify({ script }), signal }),
   executeCommands: (database: string, script: string, signal?: AbortSignal) => request<CommandBatchResponse>('/commands', { method:'POST', body:JSON.stringify({ database, script }), signal }),
   query: (database: string, sql: string, signal?: AbortSignal) => request<QueryResponse>('/query', { method: 'POST', body: JSON.stringify({ database, sql, maxRows: 1000, timeoutMs: 30000 }), signal }),
-  ask: (context: { database:string; measurement:string; sql:string; error:string; schema:MeasurementSchema; localIssues:{level:string;message:string}[] }, settings: ClaudeSettings, apiKey: string, signal?:AbortSignal) => request<ClaudeDiagnosis>('/ask', { method: 'POST', body: JSON.stringify({ context, settings, apiKey }),signal }),
-  probeClaude: (settings: ClaudeSettings) => request<{ready:boolean;version?:string;message:string}>('/claude/probe',{method:'POST',body:JSON.stringify({settings})})
+  ask: (context: { database:string; measurement:string; sql:string; error:string; schema:MeasurementSchema; localIssues:{level:string;message:string}[] }, signal?:AbortSignal) => request<ClaudeDiagnosis>('/ask', { method: 'POST', body: JSON.stringify({ context }),signal }),
+  probeClaude: () => request<{ready:boolean;kind:'ready'|'not_installed'|'not_authenticated'|'authentication_unknown';version?:string;message:string}>('/claude/probe',{method:'POST',body:'{}'})
 }
