@@ -96,14 +96,16 @@ export function createClaudeCli({
   maxOutputBytes=DEFAULT_MAX_OUTPUT_BYTES,
 }={}) {
   if(typeof runProcess!=='function')throw new TypeError('runProcess is required')
+  const resolveCommand=typeof command==='function'?command:()=>command
   return{
     async probe() {
       try{
-        const versionResult=await runProcess(command,['--version'],'',10_000)
+        const currentCommand=resolveCommand()
+        const versionResult=await runProcess(currentCommand,['--version'],'',10_000)
         const version=String(versionResult?.stdout??versionResult??'').trim()
         if(!/claude/i.test(version))return{ready:false,kind:'not_installed',version,message:'指定路径不是 Claude Code 命令'}
         try{
-          const authResult=await runProcess(command,['auth','status','--json'],'',15_000)
+          const authResult=await runProcess(currentCommand,['auth','status','--json'],'',15_000)
           const auth=JSON.parse(String(authResult?.stdout??authResult??''))
           const ready=Boolean(auth.loggedIn??auth.authenticated??false)
           return{ready,kind:ready?'ready':'not_authenticated',version,message:ready?'Claude CLI 已安装并登录':'Claude CLI 尚未登录'}
@@ -118,7 +120,7 @@ export function createClaudeCli({
     async chat({messages,attachments={},signal,secrets=[]}={}) {
       const prompt=buildClaudeChatPrompt(messages,attachments,{secrets})
       try{
-        const result=await runProcess(command,[
+        const result=await runProcess(resolveCommand(),[
           '-p','--tools','','--permission-mode','dontAsk','--no-session-persistence','--output-format','text',
         ],prompt,timeoutMs,signal)
         return{content:outputText(result,maxOutputBytes),usage:{}}

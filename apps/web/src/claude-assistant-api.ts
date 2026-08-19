@@ -4,6 +4,7 @@ import type {
   ClaudeAssistantSession,
   ClaudeAssistantSessionSummary,
   ClaudeProbe,
+  ClaudeSettings,
 } from './claude-assistant-types.ts'
 
 type Fetch = typeof fetch
@@ -68,6 +69,10 @@ export function createClaudeAssistantClient(options:ClaudeAssistantClientOptions
         method:'POST',body:JSON.stringify(input),signal,
       }),
     probe:()=>request<ClaudeProbe>('/claude/probe',{method:'POST',body:'{}'}),
+    getSettings:()=>request<ClaudeSettings>('/claude/settings'),
+    saveSettings:(cliPath:string)=>request<ClaudeSettings>('/claude/settings',{
+      method:'PATCH',body:JSON.stringify({cliPath}),
+    }),
   }
 }
 

@@ -57,3 +57,17 @@ test('returns undefined for delete and redacts the bearer token from structured 
     return true
   })
 })
+
+test('loads and saves the application-level Claude CLI path',async()=>{
+  const calls=[]
+  const client=createClaudeAssistantClient({
+    fetchImpl:async (url,init)=>{calls.push({url,init});return response({cliPath:'C:/Tools/claude.exe'})},
+    apiBase:()=>'/api',sessionId:()=>'',
+  })
+  assert.deepEqual(await client.getSettings(),{cliPath:'C:/Tools/claude.exe'})
+  await client.saveSettings('C:/Tools/claude.exe')
+  assert.deepEqual(calls.map(call=>[call.url,call.init.method??'GET']),[
+    ['/api/claude/settings','GET'],['/api/claude/settings','PATCH'],
+  ])
+  assert.deepEqual(JSON.parse(calls[1].init.body),{cliPath:'C:/Tools/claude.exe'})
+})

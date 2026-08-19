@@ -10,3 +10,12 @@ test('Bridge exposes Claude assistant sessions without Agent runtime wiring',asy
   assert.doesNotMatch(source,/createAgent|agentStreams|\/agent\//)
   assert.doesNotMatch(source,/agent:\{ready/)
 })
+
+test('Claude routes and settings are handled before database session authentication',async()=>{
+  const source=await readFile(new URL('./server.mjs',import.meta.url),'utf8')
+  const route=source.indexOf("if(url.pathname==='/claude/settings'")
+  const session=source.indexOf('const current=getSession(request)')
+  assert.ok(route>0)
+  assert.ok(session>route)
+  assert.match(source,/createClaudeSettingsStore/)
+})

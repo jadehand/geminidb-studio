@@ -101,7 +101,7 @@ claude --version
 claude auth status
 ```
 
-默认执行命令为 `claude`。如果它不在 `PATH` 中，可以在启动 Bridge 前通过 `GEMINIDB_CLAUDE_CLI` 指定完整路径。
+默认执行命令为 `claude`。可以在 Claude 助手顶部的“Claude CLI 路径”中填写完整路径并保存；留空时自动从系统 `PATH` 检测。开发环境也可以在启动 Bridge 前通过 `GEMINIDB_CLAUDE_CLI` 设置默认路径，应用内已保存的路径优先。
 
 ### 个人工具
 

@@ -17,6 +17,7 @@ import { createClaudeDiagnostics } from './claude-diagnostics.mjs'
 import { createClaudeCli } from './claude-cli.mjs'
 import { createClaudeAssistantStore } from './claude-assistant-store.mjs'
 import { createClaudeAssistantApi } from './claude-assistant-api.mjs'
+import { createClaudeSettingsStore } from './claude-settings.mjs'
 
 const HOST='127.0.0.1',PORT=Number(process.env.GEMINIDB_BRIDGE_PORT||8790),sessions=new Map(),PARENT_PID=parseParentPid()
 
@@ -24,12 +25,15 @@ function json(response,status,payload,origin=''){response.writeHead(status,{'Con
 async function body(request){return readJsonBody(request)}
 class HttpError extends Error{constructor(status,code,message){super(message);this.status=status;this.code=code}}
 function getSession(request){const token=(request.headers.authorization||'').replace(/^Bearer\s+/i,''),current=sessions.get(token);if(!current)throw new HttpError(401,'SESSION_REQUIRED','连接会话不存在或已失效，请重新登录');return current}
+function getOptionalSession(request){const token=(request.headers.authorization||'').replace(/^Bearer\s+/i,'');return token?sessions.get(token):undefined}
 function option(name){const index=process.argv.indexOf(name);return index<0?'':String(process.argv[index+1]||'')}
 function measurementDataOptions(url){try{return parseMeasurementDataOptions(url.searchParams)}catch(error){throw new HttpError(400,'MEASUREMENT_DATA_OPTIONS_INVALID',error instanceof Error?error.message:'invalid measurement data options')}}
 function runProcess(command,args,input,timeoutMs=90000,signal){return new Promise((resolve,reject)=>{if(signal?.aborted)return reject(new HttpError(499,'DIAGNOSIS_CANCELLED','诊断已取消'));const child=spawn(command,args,{shell:false,windowsHide:true,stdio:['pipe','pipe','pipe']}),stdout=[],stderr=[];let size=0,settled=false,timer;const abort=()=>{child.kill();finish(new HttpError(499,'DIAGNOSIS_CANCELLED','诊断已取消'))};const finish=(error,value)=>{if(settled)return;settled=true;clearTimeout(timer);signal?.removeEventListener('abort',abort);error?reject(error):resolve(value)};signal?.addEventListener('abort',abort,{once:true});const collect=(target,chunk)=>{size+=chunk.length;if(size>2_000_000){child.kill();finish(new HttpError(502,'CLAUDE_OUTPUT_LIMIT','Claude 输出超过 2 MB'))}else target.push(chunk)};child.stdout.on('data',chunk=>collect(stdout,chunk));child.stderr.on('data',chunk=>collect(stderr,chunk));child.on('error',error=>finish(new HttpError(502,'CLAUDE_CLI_START_FAILED',error.message)));child.on('close',code=>{const out=Buffer.concat(stdout).toString('utf8'),err=Buffer.concat(stderr).toString('utf8').trim();code===0?finish(null,{stdout:out,stderr:err}):finish(new HttpError(502,'CLAUDE_CLI_FAILED',err||`Claude CLI 退出码 ${code}`))});child.stdin.end(input);timer=setTimeout(()=>{child.kill();finish(new HttpError(504,'CLAUDE_TIMEOUT','Claude CLI 超过 90 秒未响应'))},timeoutMs)})}
-const claudeCli=createClaudeCli({runProcess,command:option('--claude-cli')||process.env.GEMINIDB_CLAUDE_CLI||'claude'})
-const claudeDiagnostics=createClaudeDiagnostics({cli:claudeCli})
 const applicationDataDir=option('--data-dir')||process.env.GEMINIDB_STUDIO_DATA_DIR||join(tmpdir(),'geminidb-studio-dev')
+const claudeSettings=createClaudeSettingsStore({dataDir:applicationDataDir,fallbackCommand:option('--claude-cli')||process.env.GEMINIDB_CLAUDE_CLI||'claude'})
+await claudeSettings.init()
+const claudeCli=createClaudeCli({runProcess,command:()=>claudeSettings.command()})
+const claudeDiagnostics=createClaudeDiagnostics({cli:claudeCli})
 const claudeAssistantStore=createClaudeAssistantStore({dataDir:applicationDataDir})
 await claudeAssistantStore.init()
 const claudeAssistantApi=createClaudeAssistantApi({store:claudeAssistantStore,cli:claudeCli})
@@ -50,13 +54,16 @@ const server=http.createServer(async(request,response)=>{
   try{
     if(url.pathname==='/health')return send(200,{status:'ok',modes:['influx'],version:'0.7.1'})
     if(url.pathname==='/login'&&request.method==='POST')return send(200,await login(await body(request)))
-    const current=getSession(request)
+    if(url.pathname==='/claude/settings'&&request.method==='GET')return send(200,claudeSettings.get())
+    if(url.pathname==='/claude/settings'&&request.method==='PATCH')return send(200,await claudeSettings.update(await body(request)))
+    if(url.pathname==='/claude/probe'&&request.method==='POST'){await body(request);return send(200,await claudeDiagnostics.probe())}
     if(url.pathname==='/claude/sessions'||url.pathname.startsWith('/claude/sessions/')){
       const payload=['POST','PATCH'].includes(request.method)?await body(request):{}
-      const result=await handleClaudeAssistant({pathname:url.pathname,method:request.method,session:current,payload},request,response)
+      const result=await handleClaudeAssistant({pathname:url.pathname,method:request.method,session:getOptionalSession(request),payload},request,response)
       if(result)return send(result.status,result.payload)
       throw new HttpError(404,'NOT_FOUND','Claude 助手接口不存在')
     }
+    const current=getSession(request)
     if(url.pathname==='/bulk-jobs'||url.pathname.startsWith('/bulk-jobs/')){
       const payload=request.method==='POST'?await body(request):undefined
       const bulk=await bulkApi.handle({method:request.method,pathname:url.pathname,session:current,payload})
@@ -117,7 +124,6 @@ const server=http.createServer(async(request,response)=>{
       const data=await body(request),database=String(data.database||'')
       return send(200,await executeSingleQuery({script:String(data.sql||''),executeQuery:statement=>influxQuery(current,database,statement)}))
     }
-    if(url.pathname==='/claude/probe'&&request.method==='POST'){await body(request);return send(200,await claudeDiagnostics.probe())}
     if(url.pathname==='/ask'&&request.method==='POST')return send(200,await handleAsk(await body(request),current,request,response))
     throw new HttpError(404,'NOT_FOUND','接口不存在')
   }catch(error){

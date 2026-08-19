@@ -24,11 +24,7 @@ function fields(value,allowed) {
   if(unexpected.length)throw new ClaudeAssistantApiError(400,'CLAUDE_INPUT_INVALID',`不支持的字段：${unexpected.join(', ')}`)
 }
 
-function ownerId(session) {
-  const value=String(session?.bulkIdentity||'').trim()
-  if(!value)throw new ClaudeAssistantApiError(401,'SESSION_REQUIRED','连接会话不存在或已失效，请重新登录')
-  return 'local'
-}
+function ownerId() {return 'local'}
 
 function sessionSecrets(session) {
   return [

@@ -39,6 +39,8 @@ test('drawer exposes chat history, explicit context, diagnosis, cancellation, an
   assert.match(source,/autoFocus/)
   assert.match(source,/event\.key==='Escape'/)
   assert.match(source,/loadSession\(resolvedSessionId\)/)
+  assert.match(source,/Claude CLI 路径/)
+  assert.match(source,/调整 Claude 助手宽度/)
 })
 
 test('runtime web source contains no obsolete Agent workbench implementation',async()=>{

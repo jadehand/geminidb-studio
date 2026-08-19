@@ -44,6 +44,14 @@ test('message submission persists the user message and assistant reply',async t=
   assert.deepEqual(received.attachments,{sql:'SELECT 1'})
 })
 
+test('local Claude history does not require a GeminiDB connection session',async t=>{
+  const {api}=await setup(t)
+  const created=await api.handle({pathname:'/claude/sessions',method:'POST',payload:{title:'离线会话'}})
+  assert.equal(created.status,201)
+  const listed=await api.handle({pathname:'/claude/sessions',method:'GET',payload:{}})
+  assert.equal(listed.payload[0].title,'离线会话')
+})
+
 test('keeps the user message but no assistant message when Claude fails',async t=>{
   const {api}=await setup(t,async()=>{throw Object.assign(new Error('failed'),{code:'CLAUDE_CLI_FAILED'})})
   const session=(await api.handle({pathname:'/claude/sessions',method:'POST',session:owner('one'),payload:{}})).payload

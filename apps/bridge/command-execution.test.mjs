@@ -163,7 +163,7 @@ test('single-query execution rejects mixed or repeated USE commands before upstr
 test('server query route uses the single-query guard', () => {
   const source = readFileSync(new URL('./server.mjs', import.meta.url), 'utf8')
   const queryStart = source.indexOf("url.pathname==='/query'")
-  const nextRoute = source.indexOf("url.pathname==='/claude/probe'", queryStart)
+  const nextRoute = source.indexOf("throw new HttpError(404,'NOT_FOUND','接口不存在')", queryStart)
   assert.ok(queryStart >= 0)
   assert.ok(nextRoute > queryStart)
   assert.match(source.slice(queryStart, nextRoute), /executeSingleQuery/)

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { claudeAssistantApi } from './claude-assistant-api.ts'
+import { DEFAULT_CLAUDE_DRAWER_WIDTH, fitClaudeDrawerWidth } from './claude-assistant-layout.ts'
 import { buildClaudeAttachments, extractInfluxqlBlocks, shouldRenameSession, type ClaudeContextSelection, type ClaudeContextSource } from './claude-assistant.ts'
 import type { ClaudeAssistantAttachments, ClaudeAssistantMessage, ClaudeAssistantSession, ClaudeAssistantSessionSummary, ClaudeProbe } from './claude-assistant-types.ts'
 
@@ -13,6 +14,12 @@ type Props={
 }
 
 const emptySelection:ClaudeContextSelection={sql:false,error:false,schema:false}
+const drawerWidthKey='gdb.claudeDrawerWidth'
+
+function initialDrawerWidth() {
+  const stored=Number(window.localStorage.getItem(drawerWidthKey))
+  return fitClaudeDrawerWidth(Number.isFinite(stored)&&stored>0?stored:DEFAULT_CLAUDE_DRAWER_WIDTH,window.innerWidth)
+}
 
 function titleFromMessage(content:string) {
   const compact=content.replace(/\s+/g,' ').trim()
@@ -46,6 +53,10 @@ export default function ClaudeAssistantDrawer({
   const [loading,setLoading]=useState(false)
   const [initializing,setInitializing]=useState(false)
   const [probe,setProbe]=useState<ClaudeProbe>()
+  const [cliPathDraft,setCliPathDraft]=useState('')
+  const [savingSettings,setSavingSettings]=useState(false)
+  const [drawerWidth,setDrawerWidth]=useState(initialDrawerWidth)
+  const [drawerDragging,setDrawerDragging]=useState(false)
   const [deleteTarget,setDeleteTarget]=useState<ClaudeAssistantSessionSummary>()
   const abortRef=useRef<AbortController|undefined>(undefined)
 
@@ -66,9 +77,10 @@ export default function ClaudeAssistantDrawer({
     if(!open)return
     let cancelled=false
     setInitializing(true)
-    void Promise.all([refresh(),claudeAssistantApi.probe()]).then(async([next,nextProbe])=>{
+    void Promise.all([refresh(),claudeAssistantApi.probe(),claudeAssistantApi.getSettings()]).then(async([next,nextProbe,nextSettings])=>{
       if(cancelled)return
       setProbe(nextProbe)
+      setCliPathDraft(nextSettings.cliPath)
       const id=activeId&&next.some(item=>item.id===activeId)?activeId:next[0]?.id
       if(id)await loadSession(id)
       else setActive(undefined)
@@ -76,6 +88,12 @@ export default function ClaudeAssistantDrawer({
       .finally(()=>!cancelled&&setInitializing(false))
     return()=>{cancelled=true}
   },[open,activeId,loadSession,onNotify,refresh])
+
+  useEffect(()=>{
+    const resize=()=>setDrawerWidth(current=>fitClaudeDrawerWidth(current,window.innerWidth))
+    window.addEventListener('resize',resize)
+    return()=>window.removeEventListener('resize',resize)
+  },[])
 
   useEffect(()=>setTitleDraft(active?.title??''),[active?.id,active?.title])
 
@@ -97,6 +115,44 @@ export default function ClaudeAssistantDrawer({
     setActive(created)
     await refresh()
     return created
+  }
+
+  function notifyCreateFailure(error:unknown) {
+    onNotify(error instanceof Error?error.message:'新建 Claude 会话失败')
+  }
+
+  async function saveCliSettings() {
+    if(savingSettings)return
+    setSavingSettings(true)
+    try{
+      const settings=await claudeAssistantApi.saveSettings(cliPathDraft)
+      setCliPathDraft(settings.cliPath)
+      const nextProbe=await claudeAssistantApi.probe()
+      setProbe(nextProbe)
+      onNotify(nextProbe.ready?'Claude CLI 路径已保存并检测成功':`路径已保存：${nextProbe.message}`)
+    }catch(error){onNotify(error instanceof Error?error.message:'Claude CLI 路径保存失败')}
+    finally{setSavingSettings(false)}
+  }
+
+  function resizeDrawerBy(next:number) {
+    const width=fitClaudeDrawerWidth(next,window.innerWidth)
+    setDrawerWidth(width)
+    window.localStorage.setItem(drawerWidthKey,String(width))
+  }
+
+  function beginDrawerResize(event:React.PointerEvent<HTMLButtonElement>) {
+    event.preventDefault()
+    const origin=event.clientX,start=drawerWidth
+    setDrawerDragging(true)
+    const move=(next:PointerEvent)=>setDrawerWidth(fitClaudeDrawerWidth(start+origin-next.clientX,window.innerWidth))
+    const stop=(next:PointerEvent)=>{
+      resizeDrawerBy(start+origin-next.clientX)
+      setDrawerDragging(false)
+      window.removeEventListener('pointermove',move)
+      window.removeEventListener('pointerup',stop)
+    }
+    window.addEventListener('pointermove',move)
+    window.addEventListener('pointerup',stop)
   }
 
   async function submit(content:string,attachments:ClaudeAssistantAttachments) {
@@ -159,11 +215,13 @@ export default function ClaudeAssistantDrawer({
     }
   }
 
-  return <aside className={`claude-assistant-drawer ${open?'open':''}`} aria-label="Claude 助手">
+  return <aside className={`claude-assistant-drawer ${open?'open':''}`} aria-label="Claude 助手" style={{width:drawerWidth}}>
+    <button className={`claude-assistant-resizer ${drawerDragging?'dragging':''}`} type="button" role="separator" aria-label="调整 Claude 助手宽度" aria-orientation="vertical" aria-valuemin={520} aria-valuemax={Math.max(520,window.innerWidth-96)} aria-valuenow={drawerWidth} onPointerDown={beginDrawerResize} onDoubleClick={()=>resizeDrawerBy(DEFAULT_CLAUDE_DRAWER_WIDTH)} onKeyDown={event=>{if(event.key==='ArrowLeft'){event.preventDefault();resizeDrawerBy(drawerWidth+16)}if(event.key==='ArrowRight'){event.preventDefault();resizeDrawerBy(drawerWidth-16)}if(event.key==='Home'){event.preventDefault();resizeDrawerBy(520)}if(event.key==='End'){event.preventDefault();resizeDrawerBy(window.innerWidth)}}} title="拖动调整宽度，双击恢复默认"/>
     <header className="claude-assistant-head"><div><b>✦ Claude 助手</b><small>{probe?.ready?'本地 CLI 已就绪':probe?.message||'检测本地 Claude CLI'}</small></div><button onClick={onClose} aria-label="关闭 Claude 助手">×</button></header>
+    <div className="claude-cli-settings"><label><span>Claude CLI 路径</span><input value={cliPathDraft} onChange={event=>setCliPathDraft(event.target.value)} placeholder="留空使用自动检测" aria-label="Claude CLI 路径"/></label><button onClick={()=>void saveCliSettings()} disabled={savingSettings}>{savingSettings?'检测中…':'保存并检测'}</button><small>Claude Code CLI 的自定义路径；留空使用系统自动检测。</small></div>
     <div className="claude-assistant-layout">
       <nav className="claude-history" aria-label="聊天历史">
-        <button className="primary claude-new-session" onClick={()=>void createSession()}>＋ 新建会话</button>
+        <button className="primary claude-new-session" onClick={()=>void createSession().catch(notifyCreateFailure)}>＋ 新建会话</button>
         <input value={search} onChange={event=>setSearch(event.target.value)} placeholder="搜索历史" aria-label="搜索历史"/>
         <div className="claude-history-list">{visibleSessions.map(item=><div key={item.id} className={item.id===activeId?'active':''}><button onClick={()=>void loadSession(item.id)}><b>{item.title}</b><small>{new Date(item.updatedAt).toLocaleString('zh-CN')}</small></button><button className="claude-delete-session" onClick={()=>setDeleteTarget(item)} aria-label={`删除 ${item.title}`}>×</button></div>)}</div>
       </nav>
@@ -171,7 +229,7 @@ export default function ClaudeAssistantDrawer({
         {initializing?<div className="claude-empty">正在读取本机历史…</div>:active?<>
           <input className="claude-session-title" value={titleDraft} onChange={event=>setTitleDraft(event.target.value)} onBlur={()=>void renameActive()} onKeyDown={event=>{if(event.key==='Enter')event.currentTarget.blur()}} aria-label="会话标题"/>
           <div className="claude-messages">{active.messages.length?active.messages.map(message=><ClaudeMessage key={message.id} message={message} onOpenSql={onOpenSql} onNotify={onNotify}/>):<div className="claude-empty"><b>开始一段本地对话</b><span>默认不会附带 SQL、错误或 Schema。</span></div>}</div>
-        </>:<div className="claude-empty"><b>本地 Claude 助手</b><span>新建会话后，可进行普通聊天或诊断当前查询。</span><button className="primary" onClick={()=>void createSession()}>新建会话</button></div>}
+        </>:<div className="claude-empty"><b>本地 Claude 助手</b><span>新建会话后，可进行普通聊天或诊断当前查询。</span><button className="primary" onClick={()=>void createSession().catch(notifyCreateFailure)}>新建会话</button></div>}
         <div className="claude-composer">
           <div className="claude-context-options">
             <label><input type="checkbox" checked={selection.sql} disabled={!context.sql.trim()} onChange={event=>setSelection({...selection,sql:event.target.checked})}/>附加当前 SQL</label>
@@ -183,7 +241,7 @@ export default function ClaudeAssistantDrawer({
         </div>
       </section>
     </div>
-    <footer>仅调用本机 <code>claude</code> · 历史保存在本机 · 不会自动执行 SQL</footer>
+    <footer>仅调用本机 Claude CLI · 历史保存在本机 · 不会自动执行 SQL</footer>
     {deleteTarget&&<div className="claude-delete-overlay"><div className="claude-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="claude-delete-title"><h3 id="claude-delete-title">删除聊天记录？</h3><p>“{deleteTarget.title}”将从本机历史中删除。</p><div><button autoFocus onClick={()=>setDeleteTarget(undefined)}>取消</button><button className="danger" onClick={()=>void confirmDelete()}>确认删除</button></div></div></div>}
   </aside>
 }

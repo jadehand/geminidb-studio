@@ -32,3 +32,7 @@ export type ClaudeProbe = {
   message: string
   version?: string
 }
+
+export type ClaudeSettings = {
+  cliPath: string
+}

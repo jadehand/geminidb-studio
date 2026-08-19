@@ -63,6 +63,24 @@ test('chat always uses the Bridge-configured Claude command',async()=>{
   assert.equal(calls[0][0],'C:/Claude/claude.exe')
 })
 
+test('probe and chat resolve the latest application-level Claude command',async()=>{
+  const calls=[]
+  let command='claude'
+  const cli=createClaudeCli({command:()=>command,runProcess:async(executable,args)=>{
+    calls.push([executable,args])
+    if(args[0]==='--version')return{stdout:'Claude Code 1.2.3'}
+    if(args[0]==='auth')return{stdout:'{"loggedIn":true}'}
+    return{stdout:'ok'}
+  }})
+
+  await cli.probe()
+  command='C:/Tools/claude.exe'
+  await cli.chat({messages:[{role:'user',content:'hello'}]})
+
+  assert.equal(calls[0][0],'claude')
+  assert.equal(calls.at(-1)[0],'C:/Tools/claude.exe')
+})
+
 test('probe reports ready, not authenticated, and not installed states', async () => {
   const ready=createClaudeCli({runProcess:async (_command,args)=>args[0]==='--version'
     ? {stdout:'Claude Code 1.2.3'}
