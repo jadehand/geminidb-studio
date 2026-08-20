@@ -53,7 +53,7 @@ const server=http.createServer(async(request,response)=>{
   const url=new URL(request.url||'/',`http://${HOST}:${PORT}`)
   if(request.method==='OPTIONS')return send(204,{})
   try{
-    if(url.pathname==='/health')return send(200,{status:'ok',modes:['influx'],version:'0.7.2'})
+if(url.pathname==='/health')return send(200,{status:'ok',modes:['influx'],version:'0.7.3'})
     if(url.pathname==='/login'&&request.method==='POST')return send(200,await login(await body(request)))
     if(url.pathname==='/claude/settings'&&request.method==='GET')return send(200,claudeSettings.get())
     if(url.pathname==='/claude/settings'&&request.method==='PATCH')return send(200,await claudeSettings.update(await body(request)))
