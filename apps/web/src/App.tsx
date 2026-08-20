@@ -304,7 +304,7 @@ export default function App() {
     }
     close()
   }
-  function renameQueryTab(id: string) { const current=workspaceTabs.find(tab=>tab.id===id);if(!current||current.kind!=='query')return;const name=window.prompt('查询页签名称',current.name)?.trim();if(name)persistWorkspaceTabs(workspaceTabs.map(tab=>tab.kind==='query'&&tab.id===id?{...tab,name}:tab)) }
+  function renameQueryTab(id:string,name:string){persistWorkspaceTabs(workspaceTabs.map(tab=>tab.kind==='query'&&tab.id===id?{...tab,name}:tab))}
   function persistConnections(next: Connection[]) { const normalized=next.map(normalizeConnectionWritePolicy); setConnections(normalized); normalized.forEach(connection => { if (connection.password) void saveCredential(connection.id,connection.password) }); save('gdb.connections', normalized.map(connection => ({ ...connection, password: '' }))); return normalized }
   function confirmDeleteConnectionNow() {
     const connection = connectionPendingDelete

@@ -87,6 +87,7 @@
 }
 :root[data-theme="dark"] .query-tab .close-tab,
 :root[data-theme="dark"] .add-query-tab{color:#8996a6;background:transparent}
+:root[data-theme="dark"] .query-tab-name-input{color:#e7edf5;background:#131a25;border-color:#60a5fa}
 :root[data-theme="dark"] .query-tab .close-tab:hover,
 :root[data-theme="dark"] .add-query-tab:hover{color:#dce5ef;background:#2b3542}
 :root[data-theme="dark"] .monaco-shell{
