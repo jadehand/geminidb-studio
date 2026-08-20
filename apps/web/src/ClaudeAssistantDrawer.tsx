@@ -58,6 +58,9 @@ export default function ClaudeAssistantDrawer({
   const [drawerWidth,setDrawerWidth]=useState(initialDrawerWidth)
   const [drawerDragging,setDrawerDragging]=useState(false)
   const [assistantError,setAssistantError]=useState('')
+  const [pendingUser,setPendingUser]=useState<ClaudeAssistantMessage>()
+  const [streamingContent,setStreamingContent]=useState('')
+  const [streamStatus,setStreamStatus]=useState('')
   const [deleteTarget,setDeleteTarget]=useState<ClaudeAssistantSessionSummary>()
   const abortRef=useRef<AbortController|undefined>(undefined)
   const drawerDragRef=useRef<{pointerId:number;origin:number;start:number}|null>(null)
@@ -189,14 +192,25 @@ export default function ClaudeAssistantDrawer({
       const current=active??await createSession(titleFromMessage(message))
       resolvedSessionId=current.id
       if(current.title==='新会话')await claudeAssistantApi.renameSession(current.id,titleFromMessage(message))
-      const next=await claudeAssistantApi.sendMessage(current.id,{content:message,attachments},controller.signal)
-      setActive(next)
-      setActiveId(next.id)
+      setActive(current)
+      setPendingUser({id:`pending-${Date.now()}`,role:'user',content:message,attachments,createdAt:Date.now()})
+      setStreamingContent('')
+      setStreamStatus('正在连接本地 Claude CLI…')
       setInput('')
       setSelection(emptySelection)
+      const next=await claudeAssistantApi.sendMessageStream(current.id,{content:message,attachments},event=>{
+        if(event.type==='accepted')setPendingUser(event.message)
+        else if(event.type==='stage')setStreamStatus('Claude 正在生成回复…')
+        else if(event.type==='delta')setStreamingContent(value=>value+event.text)
+      },controller.signal)
+      setActive(next)
+      setActiveId(next.id)
+      setPendingUser(undefined)
+      setStreamingContent('')
+      setStreamStatus('')
       await refresh()
     }catch(error){
-      if(controller.signal.aborted)onNotify('已停止 Claude 回复')
+      if(controller.signal.aborted){setStreamStatus('已停止 Claude 回复');onNotify('已停止 Claude 回复')}
       else {const message=error instanceof Error?error.message:'Claude 回复失败';setAssistantError(message);onNotify(message)}
       if(resolvedSessionId)void loadSession(resolvedSessionId).catch(()=>{})
     }finally{
@@ -243,7 +257,7 @@ export default function ClaudeAssistantDrawer({
         {assistantError&&<div className="claude-inline-error" role="alert"><span>{assistantError}</span><button onClick={()=>setAssistantError('')} aria-label="关闭错误提示">×</button></div>}
         {initializing?<div className="claude-empty">正在读取本机历史…</div>:active?<>
           <input className="claude-session-title" value={titleDraft} onChange={event=>setTitleDraft(event.target.value)} onBlur={()=>void renameActive()} onKeyDown={event=>{if(event.key==='Enter')event.currentTarget.blur()}} aria-label="会话标题"/>
-          <div className="claude-messages">{active.messages.length?active.messages.map(message=><ClaudeMessage key={message.id} message={message} onOpenSql={onOpenSql} onNotify={onNotify}/>):<div className="claude-empty"><b>开始一段本地对话</b><span>默认不会附带 SQL、错误或 Schema。</span></div>}</div>
+          <div className="claude-messages">{active.messages.length||pendingUser||loading?<>{active.messages.map(message=><ClaudeMessage key={message.id} message={message} onOpenSql={onOpenSql} onNotify={onNotify}/>)}{pendingUser&&<ClaudeMessage message={pendingUser} onOpenSql={onOpenSql} onNotify={onNotify}/>} {(loading||streamingContent)&&<article className="claude-message assistant streaming"><header>Claude</header><div className="claude-stream-status"><span className="claude-stream-pulse"/>{streamStatus||'正在生成回复…'}</div>{streamingContent&&<div className="claude-message-content"><p>{streamingContent}</p></div>}</article>}</>:<div className="claude-empty"><b>开始一段本地对话</b><span>默认不会附带 SQL、错误或 Schema。</span></div>}</div>
         </>:<div className="claude-empty"><b>本地 Claude 助手</b><span>新建会话后，可进行普通聊天或诊断当前查询。</span><button className="primary" onClick={()=>void createSession().catch(notifyCreateFailure)}>新建会话</button></div>}
         <div className="claude-composer">
           <div className="claude-context-options">

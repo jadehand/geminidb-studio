@@ -60,7 +60,7 @@ export function createClaudeAssistantApi({store,cli}) {
   if(!store||!cli)throw new TypeError('store and cli are required')
   const inFlight=new Set()
   return{
-    async handle({pathname,method,session,payload:rawPayload,signal}={}) {
+    async handle({pathname,method,session,payload:rawPayload,signal,emit}={}) {
       const body=payload(rawPayload)
       const owner=ownerId(session)
       if(pathname==='/claude/sessions'&&method==='GET') {
@@ -82,14 +82,19 @@ export function createClaudeAssistantApi({store,cli}) {
           await store.get(owner,messageId)
           const input=safeInput({content:body.content,...(body.attachments===undefined?{}:{attachments:body.attachments})},session)
           const userMessage=await store.append(owner,messageId,{role:'user',content:input.content,attachments:input.attachments})
+          emit?.({type:'accepted',message:userMessage})
           const current=await store.get(owner,messageId)
+          emit?.({type:'stage',stage:'generating'})
           const response=await cli.chat({
             messages:current.messages.slice(-MAX_PROMPT_MESSAGES).map(({role,content})=>({role,content})),
             attachments:userMessage.attachments||{},
             signal,
+            onDelta:text=>emit?.({type:'delta',text}),
           })
           await store.append(owner,messageId,{role:'assistant',content:response.content})
-          return result(200,await store.get(owner,messageId))
+          const completed=await store.get(owner,messageId)
+          emit?.({type:'complete',session:completed})
+          return result(200,completed)
         }finally{inFlight.delete(key)}
       }
 

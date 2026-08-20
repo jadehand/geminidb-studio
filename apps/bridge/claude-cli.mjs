@@ -80,6 +80,34 @@ function outputText(result,maxOutputBytes) {
   return content.trim()
 }
 
+export function createClaudeStreamParser({onDelta=()=>{},maxOutputBytes=DEFAULT_MAX_OUTPUT_BYTES}={}) {
+  let buffer='',content='',finalResult=''
+  function consume(line) {
+    if(!line.trim())return
+    let event
+    try{event=JSON.parse(line)}catch{return}
+    const delta=event?.type==='stream_event'&&event?.event?.delta?.type==='text_delta'
+      ? String(event.event.delta.text??'') : ''
+    if(delta){content+=delta;onDelta(delta)}
+    if(event?.type==='result'&&typeof event.result==='string')finalResult=event.result
+  }
+  return{
+    push(chunk) {
+      buffer+=String(chunk)
+      const lines=buffer.split(/\r?\n/)
+      buffer=lines.pop()??''
+      lines.forEach(consume)
+    },
+    finish() {
+      consume(buffer);buffer=''
+      const answer=(content||finalResult).trim()
+      if(Buffer.byteLength(answer,'utf8')>maxOutputBytes)throw new ClaudeCliError(502,'CLAUDE_OUTPUT_LIMIT','Claude 输出超过限制')
+      if(!answer)throw new ClaudeCliError(502,'CLAUDE_EMPTY_RESPONSE','Claude 未返回内容')
+      return answer
+    },
+  }
+}
+
 export function buildClaudeChatPrompt(messages,attachments={},options={}) {
   const secrets=Array.isArray(options.secrets)?options.secrets:[]
   return JSON.stringify({
@@ -117,9 +145,17 @@ export function createClaudeCli({
       }
     },
 
-    async chat({messages,attachments={},signal,secrets=[]}={}) {
+    async chat({messages,attachments={},signal,secrets=[],onDelta}={}) {
       const prompt=buildClaudeChatPrompt(messages,attachments,{secrets})
       try{
+        if(onDelta) {
+          const parser=createClaudeStreamParser({onDelta,maxOutputBytes})
+          await runProcess(resolveCommand(),[
+            '-p','--tools','','--permission-mode','dontAsk','--no-session-persistence','--verbose',
+            '--output-format','stream-json','--include-partial-messages',
+          ],prompt,timeoutMs,signal,chunk=>parser.push(chunk))
+          return{content:parser.finish(),usage:{}}
+        }
         const result=await runProcess(resolveCommand(),[
           '-p','--tools','','--permission-mode','dontAsk','--no-session-persistence','--output-format','text',
         ],prompt,timeoutMs,signal)

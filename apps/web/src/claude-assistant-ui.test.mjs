@@ -45,6 +45,8 @@ test('drawer exposes chat history, explicit context, diagnosis, cancellation, an
   assert.match(source,/setPointerCapture/)
   assert.match(source,/onPointerMove/)
   assert.match(source,/onPointerUp/)
+  assert.match(source,/sendMessageStream/)
+  assert.match(source,/claude-stream-status/)
   const css=await readFile(new URL('./claude-assistant.css',import.meta.url),'utf8')
   assert.match(css,/\.claude-assistant-drawer\{position:fixed;z-index:87/)
 })

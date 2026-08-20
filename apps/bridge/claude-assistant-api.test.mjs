@@ -44,6 +44,19 @@ test('message submission persists the user message and assistant reply',async t=
   assert.deepEqual(received.attachments,{sql:'SELECT 1'})
 })
 
+test('message submission emits accepted, generating, delta, and complete events',async t=>{
+  const events=[]
+  const {api}=await setup(t,async request=>{request.onDelta?.('增量');return{content:'增量回复',usage:{}}})
+  const session=(await api.handle({pathname:'/claude/sessions',method:'POST',payload:{}})).payload
+  const result=await api.handle({
+    pathname:`/claude/sessions/${session.id}/messages`,method:'POST',payload:{content:'问题'},
+    emit:event=>events.push(event),
+  })
+  assert.equal(result.status,200)
+  assert.deepEqual(events.map(event=>event.type),['accepted','stage','delta','complete'])
+  assert.equal(events[2].text,'增量')
+})
+
 test('local Claude history does not require a GeminiDB connection session',async t=>{
   const {api}=await setup(t)
   const created=await api.handle({pathname:'/claude/sessions',method:'POST',payload:{title:'离线会话'}})

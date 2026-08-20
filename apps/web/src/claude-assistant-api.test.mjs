@@ -58,6 +58,23 @@ test('returns undefined for delete and redacts the bearer token from structured 
   })
 })
 
+test('sendMessageStream consumes NDJSON progress, deltas, and completion',async()=>{
+  const events=[]
+  const encoder=new TextEncoder()
+  const body=new ReadableStream({start(controller){
+    controller.enqueue(encoder.encode('{"type":"stage","stage":"generating"}\n{"type":"delta","text":"你好"}\n'))
+    controller.enqueue(encoder.encode('{"type":"complete","session":{"id":"one","messages":[]}}\n'))
+    controller.close()
+  }})
+  const client=createClaudeAssistantClient({
+    fetchImpl:async()=>new Response(body,{status:200,headers:{'Content-Type':'application/x-ndjson'}}),
+    apiBase:()=>'/api',sessionId:()=>'',
+  })
+  const session=await client.sendMessageStream('one',{content:'解释'},event=>events.push(event))
+  assert.deepEqual(events.map(event=>event.type),['stage','delta','complete'])
+  assert.equal(session.id,'one')
+})
+
 test('loads and saves the application-level Claude CLI path',async()=>{
   const calls=[]
   const client=createClaudeAssistantClient({

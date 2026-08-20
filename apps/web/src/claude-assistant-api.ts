@@ -9,6 +9,12 @@ import type {
 
 type Fetch = typeof fetch
 
+export type ClaudeStreamEvent =
+  | {type:'accepted';message:import('./claude-assistant-types.ts').ClaudeAssistantMessage}
+  | {type:'stage';stage:'generating'}
+  | {type:'delta';text:string}
+  | {type:'complete';session:ClaudeAssistantSession}
+
 export type ClaudeAssistantClientOptions = {
   fetchImpl?: Fetch
   apiBase?: () => string
@@ -54,6 +60,33 @@ export function createClaudeAssistantClient(options:ClaudeAssistantClientOptions
     })
     return responseBody<T>(response,token)
   }
+  async function sendMessageStream(id:string,input:{content:string;attachments?:ClaudeAssistantAttachments},onEvent:(event:ClaudeStreamEvent)=>void,signal?:AbortSignal) {
+    const token=getSession()
+    const response=await fetchImpl(`${getBase()}/claude/sessions/${encodeURIComponent(id)}/messages`,{
+      method:'POST',body:JSON.stringify(input),signal,
+      headers:{'Content-Type':'application/json','Accept':'application/x-ndjson',...(token?{Authorization:`Bearer ${token}`}:{})},
+    })
+    if(!response.ok)return responseBody<ClaudeAssistantSession>(response,token)
+    if(!response.body)throw new BridgeError('Claude 流式响应不可用','CLAUDE_STREAM_UNAVAILABLE',502)
+    const reader=response.body.getReader(),decoder=new TextDecoder()
+    let buffer='',completed:ClaudeAssistantSession|undefined
+    const consume=(line:string)=>{
+      if(!line.trim())return
+      const event=JSON.parse(line) as ClaudeStreamEvent|{type:'error';code?:string;message?:string}
+      if(event.type==='error')throw new BridgeError(event.message||'Claude 回复失败',event.code||'CLAUDE_CLI_FAILED',502)
+      onEvent(event)
+      if(event.type==='complete')completed=event.session
+    }
+    for(;;){
+      const {done,value}=await reader.read()
+      buffer+=decoder.decode(value,{stream:!done})
+      const lines=buffer.split(/\r?\n/);buffer=lines.pop()??'';lines.forEach(consume)
+      if(done)break
+    }
+    consume(buffer)
+    if(!completed)throw new BridgeError('Claude 流式响应未正常结束','CLAUDE_STREAM_INCOMPLETE',502)
+    return completed
+  }
   return{
     listSessions:()=>request<ClaudeAssistantSessionSummary[]>('/claude/sessions'),
     createSession:(title='新会话')=>request<ClaudeAssistantSession>('/claude/sessions',{
@@ -68,6 +101,7 @@ export function createClaudeAssistantClient(options:ClaudeAssistantClientOptions
       request<ClaudeAssistantSession>(`/claude/sessions/${encodeURIComponent(id)}/messages`,{
         method:'POST',body:JSON.stringify(input),signal,
       }),
+    sendMessageStream,
     probe:()=>request<ClaudeProbe>('/claude/probe',{method:'POST',body:'{}'}),
     getSettings:()=>request<ClaudeSettings>('/claude/settings'),
     saveSettings:(cliPath:string)=>request<ClaudeSettings>('/claude/settings',{

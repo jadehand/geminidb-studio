@@ -1,7 +1,23 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { buildClaudeChatPrompt, ClaudeCliError, createClaudeCli } from './claude-cli.mjs'
+import { buildClaudeChatPrompt, ClaudeCliError, createClaudeCli, createClaudeStreamParser } from './claude-cli.mjs'
+
+test('stream parser forwards real text deltas and keeps the final answer',()=>{
+  const deltas=[]
+  const parser=createClaudeStreamParser({onDelta:chunk=>deltas.push(chunk)})
+  parser.push('{"type":"system","subtype":"init"}\n{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"前半"}}}\n')
+  parser.push('{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"后半"}}}\n{"type":"result","subtype":"success","result":"前半后半"}\n')
+  assert.deepEqual(deltas,['前半','后半'])
+  assert.equal(parser.finish(),'前半后半')
+})
+
+test('stream parser handles JSON lines split across process chunks',()=>{
+  const parser=createClaudeStreamParser()
+  parser.push('{"type":"result","result":"完整')
+  parser.push('回答"}\n')
+  assert.equal(parser.finish(),'完整回答')
+})
 
 test('chat invokes only the local Claude executable with explicit attachments', async () => {
   const calls=[]
